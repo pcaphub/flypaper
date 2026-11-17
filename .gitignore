@@ -1,0 +1,7 @@
+/flypaper
+/dist/
+*.pcap
+*.pcapng
+/outbox/
+/state/
+api_key

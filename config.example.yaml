@@ -1,0 +1,43 @@
+# flypaper collector configuration. Copy to /etc/flypaper/config.yaml.
+# Durations are Go style: 5m, 2h, 7d is not valid (use 168h).
+
+name: hel-1          # this collector's name, used in titles and file names
+region: eu-north     # free text tag, e.g. the provider region
+
+pcaphub:
+  url: https://pcaphub.com
+  # One of: api_key, api_key_file, or the PCAPHUB_API_KEY environment variable.
+  # Use a key with ONLY the "upload" scope (Settings > API Keys on PcapHub).
+  api_key_file: /etc/flypaper/api_key
+  # Optional: add every upload to this collection (its UUID).
+  collection_id: ""
+  # Extra tags on every capture (10 tags max in total, lowercase and hyphens).
+  tags: [honeypot, flypaper]
+
+capture:
+  dir: /var/lib/flypaper/ring       # dumpcap ring buffer directory
+  pattern: "*.pcap*"
+  min_age: 2m                        # leave files newer than this alone (still being written)
+  local_ips: []                      # the honeypot's own addresses; empty = auto-detect
+  exclude_ports: [2222]              # management SSH, WireGuard, ... never captured into slices
+  exclude_ips: []                    # management peers
+  retention: 168h                    # delete processed ring files after 7 days (0 = keep)
+
+logs:
+  cowrie: /var/lib/flypaper/cowrie/log/cowrie.json
+  honeypots: ""                      # /var/lib/flypaper/honeypots/logs/honeypots.json
+
+select:
+  idle_gap: 5m        # a remote that goes quiet for this long starts a new session
+  max_packets: 2000   # per capture
+  max_bytes: 2097152  # per capture (2 MB)
+  min_packets: 6      # smaller slices are dropped
+  keep_attempts: 20   # brute force: keep the first N connections + the ones that logged in
+  min_score: 40       # upload threshold (scan-only is 10-30, brute force 30-40, shell 80+)
+  daily_cap: 20       # uploads per day, highest score first within a pass
+  baseline_per_day: 1 # one below-threshold sample per day so the baseline is represented
+  repeat_after: 720h  # the same scenario uploads again after 30 days
+
+state_dir: /var/lib/flypaper/state
+outbox: /var/lib/flypaper/outbox   # dry-run output
+dry_run: false
