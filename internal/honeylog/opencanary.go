@@ -15,12 +15,12 @@ import (
 
 // opencanaryLine is one OpenCanary JSON log record (opencanary.log).
 type opencanaryLine struct {
-	LogType int               `json:"logtype"`
-	SrcHost string            `json:"src_host"`
-	SrcPort int               `json:"src_port"`
-	DstPort int               `json:"dst_port"`
-	UTCTime string            `json:"utc_time"`
-	LogData json.RawMessage   `json:"logdata"`
+	LogType int             `json:"logtype"`
+	SrcHost string          `json:"src_host"`
+	SrcPort int             `json:"src_port"`
+	DstPort int             `json:"dst_port"`
+	UTCTime string          `json:"utc_time"`
+	LogData json.RawMessage `json:"logdata"`
 }
 
 // OpenCanary logtype codes used here (opencanary/logger.py).

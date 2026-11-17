@@ -36,15 +36,15 @@ type Options struct {
 
 // Packet is one captured frame with the fields the slicer needs.
 type Packet struct {
-	CI       gopacket.CaptureInfo
-	Data     []byte
-	Payload  []byte // transport payload (TCP/UDP), nil when none
-	Remote   net.IP
-	Local    net.IP
-	Proto    layers.IPProtocol
-	RemPort  int
-	LocPort  int
-	ToLocal  bool // remote -> honeypot
+	CI      gopacket.CaptureInfo
+	Data    []byte
+	Payload []byte // transport payload (TCP/UDP), nil when none
+	Remote  net.IP
+	Local   net.IP
+	Proto   layers.IPProtocol
+	RemPort int
+	LocPort int
+	ToLocal bool // remote -> honeypot
 }
 
 // Session is one attacker's activity window.

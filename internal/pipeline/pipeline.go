@@ -14,6 +14,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -34,6 +35,20 @@ type Pipeline struct {
 	Client *pcaphub.Client // nil in dry-run
 	Log    *slog.Logger
 	Now    func() time.Time
+
+	patterns []*regexp.Regexp
+	guard    bool // ratio guard active this pass
+}
+
+func (p *Pipeline) classifyOptions() classify.Options {
+	if p.patterns == nil {
+		for _, pat := range p.Cfg.Select.ExploitPatterns {
+			if re, err := regexp.Compile(pat); err == nil {
+				p.patterns = append(p.patterns, re)
+			}
+		}
+	}
+	return classify.Options{ExploitPatterns: p.patterns}
 }
 
 // Candidate is a slice with its classification and the decision taken.
@@ -42,7 +57,8 @@ type Candidate struct {
 	Session     *session.Session
 	Result      classify.Result
 	Meta        describe.Meta
-	Decision    string // upload, baseline, repeat, below-threshold, daily-cap, too-small
+	Decision    string // upload, baseline, repeat, family-cap, below-threshold, daily-cap, too-small
+	Novel       []string
 	Baseline    bool
 	CaptureID   string
 	ExistingURL string
@@ -87,7 +103,17 @@ func (p *Pipeline) Run(ctx context.Context) (*Summary, error) {
 	}
 	index := honeylog.NewIndex(events)
 
+	// Dedupe guard: if this collector uploaded more than max_ratio of the
+	// sessions it saw over the last 7 days, demand a higher score this pass.
+	p.guard = false
+	if seen, up := p.State.Ratio(p.Now(), 7); seen >= p.Cfg.Select.MinSessionsForRatio && p.Cfg.Select.MaxRatio > 0 &&
+		float64(up)/float64(seen) > p.Cfg.Select.MaxRatio {
+		p.guard = true
+		p.Log.Warn("upload ratio above limit, raising threshold for this pass", "sessions_7d", seen, "uploads_7d", up, "max_ratio", p.Cfg.Select.MaxRatio)
+	}
+
 	opt := p.sliceOptions()
+	copt := p.classifyOptions()
 	for _, f := range files {
 		if ctx.Err() != nil {
 			return sum, ctx.Err()
@@ -103,7 +129,7 @@ func (p *Pipeline) Run(ctx context.Context) (*Summary, error) {
 		for _, s := range sessions {
 			sum.Sessions++
 			evs := index.Between(s.Remote, s.Start, s.End, 2*time.Minute)
-			res := classify.Run(s, evs)
+			res := classify.RunWith(s, evs, copt)
 			p.trimBruteforce(s, evs, res)
 			if len(s.Packets) < p.Cfg.Select.MinPackets {
 				sum.Skipped["too-small"]++
@@ -215,15 +241,27 @@ func (p *Pipeline) trimBruteforce(s *session.Session, evs []honeylog.Event, res 
 }
 
 // decide applies the selection policy and sets c.Decision.
+//
+// Order: count the sighting; novelty bonus for templates never seen here;
+// daily cap; exact scenario (one upload per repeat_after); coarse family
+// (family_cap uploads per repeat_after); score threshold (raised by 20 while
+// the ratio guard is on); one baseline sample a day for the rest.
 func (p *Pipeline) decide(c *Candidate) {
 	now := p.Now()
 	s := c.Session
 	sc := p.State.Observe(c.Result.Fingerprint, c.Result.Class, s.Remote.String(), s.Start)
+	c.Novel = p.State.NoteTemplates(c.Result.Templates(), s.Start)
+	c.Result.Novel = c.Novel
+	if len(c.Novel) > 0 && p.Cfg.Select.NoveltyBonus > 0 {
+		c.Result.Score = min(100, c.Result.Score+p.Cfg.Select.NoveltyBonus)
+	}
 
+	stats := p.State.Snapshot(now)
 	in := describe.Input{
 		Session: s, Result: c.Result, Collector: p.Cfg.Name, Region: p.Cfg.Region,
-		ExtraTags: p.Cfg.PcapHub.Tags,
+		ExtraTags:  p.Cfg.PcapHub.Tags,
 		SeenBefore: sc.Seen - 1, SeenIPs: sc.IPCount, FirstSeen: sc.FirstSeen,
+		SessionsSeen: stats.SeenAll, Uploaded: stats.UploadedAll,
 	}
 	c.Meta = describe.Build(in)
 
@@ -233,17 +271,25 @@ func (p *Pipeline) decide(c *Candidate) {
 	}
 	firstTime := sc.LastUpload.IsZero()
 	stale := !firstTime && now.Sub(sc.LastUpload) >= p.Cfg.Select.RepeatAfter
-	if c.Result.Score >= p.Cfg.Select.MinScore {
-		if firstTime || stale {
-			c.Decision = "upload"
-			return
-		}
+	if !firstTime && !stale {
 		c.Decision = "repeat"
 		return
 	}
+	if p.Cfg.Select.FamilyCap > 0 && p.State.FamilyUploads(c.Result.Family, now, p.Cfg.Select.RepeatAfter) >= p.Cfg.Select.FamilyCap {
+		c.Decision = "family-cap"
+		return
+	}
+	threshold := p.Cfg.Select.MinScore
+	if p.guard {
+		threshold += 20
+	}
+	if c.Result.Score >= threshold {
+		c.Decision = "upload"
+		return
+	}
 	// Below threshold: one baseline sample a day keeps the boring majority
-	// represented, but never the same scenario twice.
-	if firstTime && p.State.BaselineToday(now) < p.Cfg.Select.BaselinePerDay {
+	// represented, but never the same scenario twice and never under the guard.
+	if !p.guard && p.State.BaselineToday(now) < p.Cfg.Select.BaselinePerDay {
 		c.Decision, c.Baseline = "baseline", true
 		return
 	}
@@ -270,7 +316,7 @@ func (p *Pipeline) publish(ctx context.Context, c *Candidate) error {
 	if p.Client == nil { // dry run: pcap + metadata next to it
 		meta := map[string]any{
 			"title": c.Meta.Title, "tags": c.Meta.Tags, "description": c.Meta.Description,
-			"class": c.Result.Class, "score": c.Result.Score, "fingerprint": c.Result.Fingerprint,
+			"class": c.Result.Class, "score": c.Result.Score, "fingerprint": c.Result.Fingerprint, "family": c.Result.Family, "novel": c.Novel,
 			"decision": c.Decision, "packets": len(c.Session.Packets), "bytes": size,
 			"remote": c.Session.Remote.String(), "start": c.Session.Start.UTC(), "end": c.Session.End.UTC(),
 			"facts": c.Result.Facts,
@@ -279,7 +325,7 @@ func (p *Pipeline) publish(ctx context.Context, c *Candidate) error {
 		if err := os.WriteFile(filepath.Join(dir, base+".json"), b, 0o640); err != nil {
 			return err
 		}
-		p.State.RecordUpload(c.Result.Fingerprint, "dry-run:"+base, p.Now(), c.Baseline)
+		p.State.RecordUpload(c.Result.Fingerprint, c.Result.Family, "dry-run:"+base, p.Now(), c.Baseline)
 		p.Log.Info("would upload", "class", c.Result.Class, "score", c.Result.Score, "remote", c.Session.Remote, "packets", len(c.Session.Packets), "bytes", size, "file", base+".pcap")
 		return nil
 	}
@@ -291,14 +337,14 @@ func (p *Pipeline) publish(ctx context.Context, c *Candidate) error {
 	if errors.Is(err, pcaphub.ErrDuplicate) {
 		// identical bytes already uploaded (ring overlap, restart): done
 		c.Decision = "duplicate"
-		p.State.RecordUpload(c.Result.Fingerprint, "", p.Now(), c.Baseline)
+		p.State.RecordUpload(c.Result.Fingerprint, c.Result.Family, "", p.Now(), c.Baseline)
 		return nil
 	}
 	if err != nil {
 		return err
 	}
 	c.CaptureID = cap.ID
-	p.State.RecordUpload(c.Result.Fingerprint, cap.ID, p.Now(), c.Baseline)
+	p.State.RecordUpload(c.Result.Fingerprint, c.Result.Family, cap.ID, p.Now(), c.Baseline)
 	p.Log.Info("uploaded", "id", cap.ID, "class", c.Result.Class, "score", c.Result.Score, "remote", c.Session.Remote, "packets", len(c.Session.Packets), "bytes", size)
 	if err := p.State.Save(); err != nil {
 		return err

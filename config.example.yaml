@@ -37,6 +37,11 @@ select:
   daily_cap: 20       # uploads per day, highest score first within a pass
   baseline_per_day: 1 # one below-threshold sample per day so the baseline is represented
   repeat_after: 720h  # the same scenario uploads again after 30 days
+  family_cap: 3       # variants of one campaign (same class, services, command verbs or paths): 3 per 30 days
+  novelty_bonus: 25   # added when a request path, command or payload template is new to this collector
+  max_ratio: 0.05     # if uploads exceed 5% of sessions over 7 days, require min_score+20 and warn
+  min_sessions_for_ratio: 200
+  exploit_patterns: []  # extra RE2 regexes matched on request lines, payloads, commands, URLs, e.g. '(?i)/cgi-bin/luci'
 
 state_dir: /var/lib/flypaper/state
 outbox: /var/lib/flypaper/outbox   # dry-run output

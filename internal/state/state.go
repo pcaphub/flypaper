@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sort"
 	"sync"
 	"time"
 )
@@ -33,6 +34,16 @@ type File struct {
 	Uploads   map[string]int       `json:"uploads"`   // "2006-01-02" -> count
 	Baseline  map[string]int       `json:"baseline"`  // day -> baseline samples uploaded
 	Sigs      map[string]bool      `json:"sigs"`      // Suricata SIDs ever seen from this collector
+	Sessions  map[string]int       `json:"sessions"`  // day -> sessions seen (for the dedupe ratio)
+	ByClass   map[string]*Counter  `json:"by_class"`  // class -> seen / uploaded, lifetime
+	Families  map[string][]string  `json:"families"`  // family -> RFC3339 upload times (last 30 days)
+	Templates map[string]time.Time `json:"templates"` // normalised request path / command template -> first seen
+}
+
+// Counter is a seen/uploaded pair.
+type Counter struct {
+	Seen     int `json:"seen"`
+	Uploaded int `json:"uploaded"`
 }
 
 // Store is the in-memory copy with a path to save to.
@@ -73,6 +84,18 @@ func Open(dir string) (*Store, error) {
 	if s.F.Sigs == nil {
 		s.F.Sigs = map[string]bool{}
 	}
+	if s.F.Sessions == nil {
+		s.F.Sessions = map[string]int{}
+	}
+	if s.F.ByClass == nil {
+		s.F.ByClass = map[string]*Counter{}
+	}
+	if s.F.Families == nil {
+		s.F.Families = map[string][]string{}
+	}
+	if s.F.Templates == nil {
+		s.F.Templates = map[string]time.Time{}
+	}
 	s.F.Version = 1
 	return s, nil
 }
@@ -92,6 +115,38 @@ func (s *Store) Save() error {
 		if d, err := time.Parse("2006-01-02", k); err == nil && d.Before(cut) {
 			delete(s.F.Uploads, k)
 			delete(s.F.Baseline, k)
+		}
+	}
+	for k := range s.F.Sessions {
+		if d, err := time.Parse("2006-01-02", k); err == nil && d.Before(cut) {
+			delete(s.F.Sessions, k)
+		}
+	}
+	for fam, times := range s.F.Families {
+		var keep []string
+		for _, t := range times {
+			if ts, err := time.Parse(time.RFC3339, t); err == nil && ts.After(cut) {
+				keep = append(keep, t)
+			}
+		}
+		if len(keep) == 0 {
+			delete(s.F.Families, fam)
+		} else {
+			s.F.Families[fam] = keep
+		}
+	}
+	if len(s.F.Templates) > 50000 { // bounded: drop the oldest half
+		type kv struct {
+			k string
+			t time.Time
+		}
+		all := make([]kv, 0, len(s.F.Templates))
+		for k, t := range s.F.Templates {
+			all = append(all, kv{k, t})
+		}
+		sort.Slice(all, func(i, j int) bool { return all[i].t.Before(all[j].t) })
+		for _, x := range all[:len(all)/2] {
+			delete(s.F.Templates, x.k)
 		}
 	}
 	b, err := json.MarshalIndent(&s.F, "", " ")
@@ -124,6 +179,13 @@ func (s *Store) MarkProcessed(name string) {
 func (s *Store) Observe(fp, class, ip string, at time.Time) *Scenario {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.F.Sessions[at.UTC().Format("2006-01-02")]++
+	c := s.F.ByClass[class]
+	if c == nil {
+		c = &Counter{}
+		s.F.ByClass[class] = c
+	}
+	c.Seen++
 	sc := s.F.Scenarios[fp]
 	if sc == nil {
 		sc = &Scenario{Class: class, FirstSeen: at}
@@ -169,7 +231,7 @@ func (s *Store) BaselineToday(day time.Time) int {
 }
 
 // RecordUpload stores a successful upload of a scenario.
-func (s *Store) RecordUpload(fp, captureID string, at time.Time, baseline bool) {
+func (s *Store) RecordUpload(fp, family, captureID string, at time.Time, baseline bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	day := at.UTC().Format("2006-01-02")
@@ -177,11 +239,80 @@ func (s *Store) RecordUpload(fp, captureID string, at time.Time, baseline bool) 
 	if baseline {
 		s.F.Baseline[day]++
 	}
+	if family != "" {
+		s.F.Families[family] = append(s.F.Families[family], at.UTC().Format(time.RFC3339))
+	}
 	if sc := s.F.Scenarios[fp]; sc != nil {
 		sc.LastUpload = at
 		sc.CaptureID = captureID
 		sc.LastReported = sc.Seen
+		if c := s.F.ByClass[sc.Class]; c != nil {
+			c.Uploaded++
+		}
 	}
+}
+
+// FamilyUploads counts uploads of a family within the window ending at now.
+func (s *Store) FamilyUploads(family string, now time.Time, window time.Duration) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	n := 0
+	for _, t := range s.F.Families[family] {
+		if ts, err := time.Parse(time.RFC3339, t); err == nil && now.Sub(ts) < window {
+			n++
+		}
+	}
+	return n
+}
+
+// NoteTemplates records request/command templates and returns the ones not
+// seen before on this collector.
+func (s *Store) NoteTemplates(templates []string, at time.Time) []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var fresh []string
+	for _, t := range templates {
+		if _, ok := s.F.Templates[t]; !ok {
+			s.F.Templates[t] = at
+			fresh = append(fresh, t)
+		}
+	}
+	return fresh
+}
+
+// Ratio returns sessions seen and uploads made over the last n days
+// (including today).
+func (s *Store) Ratio(now time.Time, days int) (seen, uploaded int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := 0; i < days; i++ {
+		d := now.UTC().AddDate(0, 0, -i).Format("2006-01-02")
+		seen += s.F.Sessions[d]
+		uploaded += s.F.Uploads[d]
+	}
+	return
+}
+
+// Stats is a snapshot for the stats command and the description footer.
+type Stats struct {
+	Seen7, Uploaded7     int
+	SeenAll, UploadedAll int
+	Scenarios, Families  int
+	ByClass              map[string]Counter
+}
+
+// Snapshot returns the current counters.
+func (s *Store) Snapshot(now time.Time) Stats {
+	seen7, up7 := s.Ratio(now, 7)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	st := Stats{Seen7: seen7, Uploaded7: up7, Scenarios: len(s.F.Scenarios), Families: len(s.F.Families), ByClass: map[string]Counter{}}
+	for k, c := range s.F.ByClass {
+		st.ByClass[k] = *c
+		st.SeenAll += c.Seen
+		st.UploadedAll += c.Uploaded
+	}
+	return st
 }
 
 // NewSignatures returns the SIDs not seen before from this collector and

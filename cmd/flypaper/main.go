@@ -5,6 +5,7 @@
 //	flypaper once       one pass, then exit
 //	flypaper dry-run    one pass writing slices + metadata to the outbox, no upload
 //	flypaper check      validate config, logs, ring dir and the PcapHub key
+//	flypaper stats      sessions seen vs uploaded, per class, dedupe ratio
 //	flypaper slice F    slice one pcap to stdout summary (debugging)
 //	flypaper version
 package main
@@ -16,6 +17,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"sort"
 	"syscall"
 	"time"
 
@@ -33,7 +35,7 @@ func main() {
 	interval := fs.Duration("interval", 2*time.Minute, "run: time between passes")
 	jsonLog := fs.Bool("json", false, "log as JSON")
 	fs.Usage = func() {
-		fmt.Fprintln(os.Stderr, "usage: flypaper [-config FILE] run|once|dry-run|check|slice FILE|version")
+		fmt.Fprintln(os.Stderr, "usage: flypaper [-config FILE] run|once|dry-run|check|stats|slice FILE|version")
 		fs.PrintDefaults()
 	}
 	if len(os.Args) < 2 {
@@ -92,6 +94,12 @@ func main() {
 	switch cmd {
 	case "check":
 		os.Exit(check(ctx, log, cfg))
+	case "stats":
+		st, err := state.Open(cfg.StateDir)
+		if err != nil {
+			fatal(log, err.Error())
+		}
+		printStats(st.Snapshot(time.Now()))
 	case "once", "dry-run":
 		p, err := newPipeline(cfg, log)
 		if err != nil {
@@ -208,6 +216,27 @@ func sliceCmd(log *slog.Logger, path string) {
 		r := classify.Run(s, nil)
 		fmt.Printf("%-39s %s  %4d pkts %3d flows  ports=%v  %s score=%d fp=%s\n",
 			s.Remote, s.Start.UTC().Format("15:04:05"), len(s.Packets), len(s.Flows), s.LocalPorts, r.Class, r.Score, r.Fingerprint)
+	}
+}
+
+func printStats(st state.Stats) {
+	pct := func(up, seen int) string {
+		if seen == 0 {
+			return "n/a"
+		}
+		return fmt.Sprintf("%.2f%%", 100*float64(up)/float64(seen))
+	}
+	fmt.Printf("last 7 days:  %d sessions, %d uploads (%s)\n", st.Seen7, st.Uploaded7, pct(st.Uploaded7, st.Seen7))
+	fmt.Printf("lifetime:     %d sessions, %d uploads (%s), %d scenarios, %d families\n", st.SeenAll, st.UploadedAll, pct(st.UploadedAll, st.SeenAll), st.Scenarios, st.Families)
+	fmt.Printf("%-22s %8s %8s %8s\n", "class", "seen", "uploaded", "ratio")
+	keys := make([]string, 0, len(st.ByClass))
+	for k := range st.ByClass {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		c := st.ByClass[k]
+		fmt.Printf("%-22s %8d %8d %8s\n", k, c.Seen, c.Uploaded, pct(c.Uploaded, c.Seen))
 	}
 }
 

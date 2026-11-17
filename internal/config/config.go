@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
@@ -21,13 +22,13 @@ type Config struct {
 	// Region label for tags and descriptions (free text, e.g. "eu-north").
 	Region string `yaml:"region"`
 
-	PcapHub  PcapHub  `yaml:"pcaphub"`
-	Capture  Capture  `yaml:"capture"`
-	Logs     Logs     `yaml:"logs"`
-	Select   Select   `yaml:"select"`
-	StateDir string   `yaml:"state_dir"`
-	Outbox   string   `yaml:"outbox"` // dry-run output directory
-	DryRun   bool     `yaml:"dry_run"`
+	PcapHub  PcapHub `yaml:"pcaphub"`
+	Capture  Capture `yaml:"capture"`
+	Logs     Logs    `yaml:"logs"`
+	Select   Select  `yaml:"select"`
+	StateDir string  `yaml:"state_dir"`
+	Outbox   string  `yaml:"outbox"` // dry-run output directory
+	DryRun   bool    `yaml:"dry_run"`
 }
 
 type PcapHub struct {
@@ -66,15 +67,29 @@ type Logs struct {
 }
 
 type Select struct {
-	IdleGap       time.Duration `yaml:"idle_gap"`
-	MaxPackets    int           `yaml:"max_packets"`
-	MaxBytes      int64         `yaml:"max_bytes"`
-	MinPackets    int           `yaml:"min_packets"`
-	KeepAttempts  int           `yaml:"keep_attempts"` // brute-force connections kept per slice
-	MinScore      int           `yaml:"min_score"`
-	DailyCap      int           `yaml:"daily_cap"`
-	BaselinePerDay int          `yaml:"baseline_per_day"`
-	RepeatAfter   time.Duration `yaml:"repeat_after"` // same scenario uploads again after this
+	IdleGap        time.Duration `yaml:"idle_gap"`
+	MaxPackets     int           `yaml:"max_packets"`
+	MaxBytes       int64         `yaml:"max_bytes"`
+	MinPackets     int           `yaml:"min_packets"`
+	KeepAttempts   int           `yaml:"keep_attempts"` // brute-force connections kept per slice
+	MinScore       int           `yaml:"min_score"`
+	DailyCap       int           `yaml:"daily_cap"`
+	BaselinePerDay int           `yaml:"baseline_per_day"`
+	RepeatAfter    time.Duration `yaml:"repeat_after"` // same scenario uploads again after this
+	// FamilyCap: uploads allowed per coarse family (class + services + verbs
+	// or path set) inside RepeatAfter, so variants of one campaign stop early.
+	FamilyCap int `yaml:"family_cap"`
+	// NoveltyBonus is added to the score when a request path, command or
+	// payload template has never been seen on this collector.
+	NoveltyBonus int `yaml:"novelty_bonus"`
+	// MaxRatio: if uploads / sessions over the last 7 days exceeds this (and
+	// at least MinSessionsForRatio sessions were seen), the pass only accepts
+	// scores >= MinScore+20 and logs a warning. 0.05 = 5 percent.
+	MaxRatio            float64 `yaml:"max_ratio"`
+	MinSessionsForRatio int     `yaml:"min_sessions_for_ratio"`
+	// ExploitPatterns are extra regular expressions (RE2 syntax) matched
+	// against request lines, payloads, commands and URLs.
+	ExploitPatterns []string `yaml:"exploit_patterns"`
 }
 
 // Default returns the configuration with every default filled in.
@@ -96,15 +111,19 @@ func Default() Config {
 			OpenCanary: "/var/log/opencanary/opencanary.log",
 		},
 		Select: Select{
-			IdleGap:        5 * time.Minute,
-			MaxPackets:     2000,
-			MaxBytes:       2 << 20,
-			MinPackets:     6,
-			KeepAttempts:   20,
-			MinScore:       40,
-			DailyCap:       20,
-			BaselinePerDay: 1,
-			RepeatAfter:    30 * 24 * time.Hour,
+			IdleGap:             5 * time.Minute,
+			MaxPackets:          2000,
+			MaxBytes:            2 << 20,
+			MinPackets:          6,
+			KeepAttempts:        20,
+			MinScore:            40,
+			DailyCap:            20,
+			BaselinePerDay:      1,
+			RepeatAfter:         30 * 24 * time.Hour,
+			FamilyCap:           3,
+			NoveltyBonus:        25,
+			MaxRatio:            0.05,
+			MinSessionsForRatio: 200,
 		},
 		StateDir: "/var/lib/flypaper/state",
 		Outbox:   "/var/lib/flypaper/outbox",
@@ -162,6 +181,11 @@ func (c Config) Validate() error {
 	}
 	if c.Select.IdleGap <= 0 {
 		return errors.New("select.idle_gap must be positive")
+	}
+	for _, p := range c.Select.ExploitPatterns {
+		if _, err := regexp.Compile(p); err != nil {
+			return fmt.Errorf("select.exploit_patterns %q: %w", p, err)
+		}
 	}
 	return nil
 }

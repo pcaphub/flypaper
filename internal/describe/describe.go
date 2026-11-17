@@ -32,6 +32,9 @@ type Input struct {
 	SeenBefore int
 	SeenIPs    int
 	FirstSeen  time.Time
+	// Collector-wide counters for the dedupe footer.
+	SessionsSeen int
+	Uploaded     int
 }
 
 const maxTags = 10
@@ -116,6 +119,18 @@ func Build(in Input) Meta {
 		}
 		b.WriteString("```\n")
 	}
+	if len(f.Payloads) > 0 {
+		fmt.Fprintf(&b, "\n%d payload sample(s) (first bytes, printable only):\n\n```\n", len(f.Payloads))
+		for i, p := range f.Payloads {
+			if i >= 10 {
+				fmt.Fprintf(&b, "... %d more\n", len(f.Payloads)-i)
+				break
+			}
+			b.WriteString(clean(Defang(p)))
+			b.WriteString("\n")
+		}
+		b.WriteString("```\n")
+	}
 	if len(f.URLs) > 0 {
 		b.WriteString("\nDownload URLs (defanged):\n")
 		for _, u := range f.URLs {
@@ -133,14 +148,20 @@ func Build(in Input) Meta {
 	}
 
 	b.WriteString("\n## Scenario\n\n")
-	fmt.Fprintf(&b, "Class %s, score %d/100, scenario fingerprint %s. ", r.Class, r.Score, r.Fingerprint)
+	fmt.Fprintf(&b, "Class %s, score %d/100, scenario fingerprint %s, family %s. ", r.Class, r.Score, r.Fingerprint, r.Family)
+	if len(r.Novel) > 0 {
+		fmt.Fprintf(&b, "%d request or command template(s) never seen on this collector before. ", len(r.Novel))
+	}
 	if in.SeenBefore > 0 {
 		fmt.Fprintf(&b, "This scenario has been seen %d times from %d addresses since %s; this capture is the representative copy.\n",
 			in.SeenBefore+1, in.SeenIPs, in.FirstSeen.UTC().Format("2006-01-02"))
 	} else {
 		b.WriteString("First sighting of this scenario on this collector.\n")
 	}
-	b.WriteString("\nCollected on a low-interaction honeypot (Cowrie and friends); the attacker never reached a real system. Credentials shown were supplied by the attacker. Uploaded automatically by flypaper, reviewed before any public release.\n")
+	if in.SessionsSeen > 0 {
+		fmt.Fprintf(&b, "Collector totals: %d sessions seen, %d uploaded (%.1f%%).\n", in.SessionsSeen, in.Uploaded+1, 100*float64(in.Uploaded+1)/float64(in.SessionsSeen))
+	}
+	b.WriteString("\nCollected on a low-interaction honeypot (Cowrie and OpenCanary); the attacker never reached a real system. Credentials shown were supplied by the attacker. Uploaded automatically by flypaper, reviewed before any public release.\n")
 
 	desc := b.String()
 	if len(desc) > 10000 {

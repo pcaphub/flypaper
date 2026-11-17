@@ -34,7 +34,9 @@ const (
 type Result struct {
 	Class       string
 	Score       int      // 0-100
-	Fingerprint string   // hex sha256 prefix, 16 chars
+	Fingerprint string   // hex sha256 prefix, 16 chars: the exact scenario
+	Family      string   // coarser hash: class + services + command verbs / path set
+	Novel       []string // request paths or command templates not in the known set (filled by the caller)
 	Tags        []string // protocol and behaviour tags, lowercase-hyphen
 	Facts       Facts
 }
@@ -50,22 +52,33 @@ type Facts struct {
 	Commands      []string // in order, deduplicated consecutive repeats
 	URLs          []string // raw, caller defangs
 	HTTPRequests  []string // "METHOD path" read from the packets themselves
+	Payloads      []string // first bytes of POST bodies and of non-HTTP service payloads (printable)
 	Hashes        []string
 	ClientVersion string
 	Forwards      []string
 }
 
 var (
-	reIPv4     = regexp.MustCompile(`\b(?:\d{1,3}\.){3}\d{1,3}\b`)
-	reHex      = regexp.MustCompile(`\b[0-9a-fA-F]{8,}\b`)
-	reNum      = regexp.MustCompile(`\b\d{3,}\b`)
-	reSpaces   = regexp.MustCompile(`\s+`)
-	reHTTPReq  = regexp.MustCompile(`^(GET|POST|HEAD|PUT|DELETE|OPTIONS|PATCH|PROPFIND|CONNECT|TRACE) (\S{1,400}) HTTP/1\.[01]\r?\n`)
-	reExploit  = regexp.MustCompile(`(?i)(\.\./|%2e%2e|/etc/passwd|cgi-bin|\$\{jndi:|<\?php|eval\(|base64_decode|wget\s|curl\s|/bin/sh|cmd=|exec\(|union\s+select|sleep\(\d|/shell|/boaform|/GponForm|/HNAP1|/setup\.cgi|/manager/html|/wp-login|/xmlrpc\.php|/\.env|/\.git/|/actuator|/solr/|/jmx|/console/|/_ignition)`)
+	reIPv4    = regexp.MustCompile(`\b(?:\d{1,3}\.){3}\d{1,3}\b`)
+	reHex     = regexp.MustCompile(`\b[0-9a-fA-F]{8,}\b`)
+	reNum     = regexp.MustCompile(`\b\d{3,}\b`)
+	reSpaces  = regexp.MustCompile(`\s+`)
+	reHTTPReq = regexp.MustCompile(`^(GET|POST|HEAD|PUT|DELETE|OPTIONS|PATCH|PROPFIND|CONNECT|TRACE) (\S{1,400}) HTTP/1\.[01]\r?\n`)
+	reExploit = regexp.MustCompile(`(?i)(\.\./|%2e%2e|/etc/passwd|cgi-bin|\$\{jndi:|<\?php|eval\(|base64_decode|php://input|allow_url_include|auto_prepend_file|system\(|passthru\(|shell_exec\(|assert\(|\bphpinfo\(|/vendor/phpunit|/eval-stdin\.php|/think/app|invokefunction|wget\s|curl\s|/bin/sh|cmd=|exec\(|union\s+select|sleep\(\d|/shell|/boaform|/GponForm|/HNAP1|/setup\.cgi|/manager/html|/wp-login|/xmlrpc\.php|/\.env|/\.git/|/actuator|/solr/|/jmx|/console/|/_ignition)`)
 )
 
+// Options tune classification.
+type Options struct {
+	// ExploitPatterns are extra regexes (from config) matched against HTTP
+	// request lines, payloads, commands and URLs in addition to the built-in list.
+	ExploitPatterns []*regexp.Regexp
+}
+
 // Run classifies one slice given the honeypot events for its remote address.
-func Run(s *session.Session, evs []honeylog.Event) Result {
+func Run(s *session.Session, evs []honeylog.Event) Result { return RunWith(s, evs, Options{}) }
+
+// RunWith is Run with options.
+func RunWith(s *session.Session, evs []honeylog.Event, opt Options) Result {
 	f := Facts{LocalPorts: s.LocalPorts, Flows: len(s.Flows)}
 	svc := map[string]bool{}
 	for _, p := range s.LocalPorts {
@@ -75,17 +88,39 @@ func Run(s *session.Session, evs []honeylog.Event) Result {
 	var lastCmd string
 	seenURL := map[string]bool{}
 	seenReq := map[string]bool{}
+	seenPayload := map[string]bool{}
+	firstPayload := map[string]bool{} // one raw sample per non-HTTP flow
 	for _, pk := range s.Packets {
-		if !pk.ToLocal || len(pk.Payload) < 14 || !httpPort(pk.LocPort) {
+		if !pk.ToLocal || len(pk.Payload) == 0 {
 			continue
 		}
-		if m := reHTTPReq.FindSubmatch(pk.Payload[:min(len(pk.Payload), 512)]); m != nil {
-			req := string(m[1]) + " " + string(m[2])
-			if !seenReq[req] && len(f.HTTPRequests) < 100 {
-				seenReq[req] = true
-				f.HTTPRequests = append(f.HTTPRequests, req)
+		if httpPort(pk.LocPort) && len(pk.Payload) >= 14 {
+			if m := reHTTPReq.FindSubmatch(pk.Payload[:min(len(pk.Payload), 512)]); m != nil {
+				req := string(m[1]) + " " + string(m[2])
+				if !seenReq[req] && len(f.HTTPRequests) < 100 {
+					seenReq[req] = true
+					f.HTTPRequests = append(f.HTTPRequests, req)
+				}
+				svc["http"] = true
+				// body after the header block: where PHP and command-injection payloads live
+				if i := strings.Index(string(pk.Payload), "\r\n\r\n"); i >= 0 && i+4 < len(pk.Payload) {
+					if body := printable(pk.Payload[i+4:], 300); body != "" && !seenPayload[body] && len(f.Payloads) < 50 {
+						seenPayload[body] = true
+						f.Payloads = append(f.Payloads, body)
+					}
+				}
+				continue
 			}
-			svc["http"] = true
+		}
+		// non-HTTP (or non-request) payload: keep the first sample per flow
+		fk := fmt.Sprintf("%d/%d>%d", pk.Proto, pk.RemPort, pk.LocPort)
+		if firstPayload[fk] || pk.LocPort == 22 || pk.LocPort == 2222 {
+			continue // SSH is encrypted after the banner; Cowrie's log covers it
+		}
+		firstPayload[fk] = true
+		if p := printable(pk.Payload, 200); p != "" && !seenPayload[p] && len(f.Payloads) < 50 {
+			seenPayload[p] = true
+			f.Payloads = append(f.Payloads, p)
 		}
 	}
 	for _, e := range evs {
@@ -141,20 +176,21 @@ func Run(s *session.Session, evs []honeylog.Event) Result {
 	f.TopCreds = topN(credCount, 5)
 
 	r := Result{Facts: f}
-	r.Class, r.Score = classify(s, f)
+	r.Class, r.Score = classify(s, f, opt)
 	r.Tags = tags(r.Class, f)
 	r.Fingerprint = fingerprint(r.Class, f)
+	r.Family = family(r.Class, f)
 	return r
 }
 
-func classify(s *session.Session, f Facts) (string, int) {
+func classify(s *session.Session, f Facts, opt Options) (string, int) {
 	hasShell := len(f.Commands) > 0
 	hasTelnet := contains(f.Services, "telnet")
 	hasSSH := contains(f.Services, "ssh")
 	switch {
 	case len(f.URLs) > 0 && hasShell:
 		return MalwareDownload, 95
-	case webExploit(f):
+	case webExploit(f, opt):
 		return WebExploit, 85
 	case hasShell:
 		if hasTelnet && !hasSSH {
@@ -182,26 +218,136 @@ func classify(s *session.Session, f Facts) (string, int) {
 	}
 }
 
-func webExploit(f Facts) bool {
+func webExploit(f Facts, opt Options) bool {
 	if !contains(f.Services, "http") && !contains(f.Services, "http-alt") {
 		return false
 	}
-	for _, c := range f.Commands {
-		if reExploit.MatchString(c) {
+	match := func(s string) bool {
+		if reExploit.MatchString(s) {
 			return true
 		}
-	}
-	for _, r := range f.HTTPRequests {
-		if reExploit.MatchString(r) {
-			return true
+		for _, re := range opt.ExploitPatterns {
+			if re.MatchString(s) {
+				return true
+			}
 		}
+		return false
 	}
-	for _, u := range f.URLs {
-		if reExploit.MatchString(u) {
-			return true
+	for _, list := range [][]string{f.Commands, f.HTTPRequests, f.Payloads, f.URLs} {
+		for _, s := range list {
+			if match(s) {
+				return true
+			}
 		}
 	}
 	return false
+}
+
+// family is the coarse scenario key: class, service set, and only the
+// command verbs (first word of each command) or the set of request paths
+// without query strings. Variants of one campaign that differ in arguments,
+// file names or parameters share a family.
+func family(class string, f Facts) string {
+	var b strings.Builder
+	b.WriteString(class)
+	b.WriteString("|")
+	b.WriteString(strings.Join(f.Services, ","))
+	b.WriteString("|")
+	verbs := map[string]bool{}
+	for _, c := range f.Commands {
+		for _, part := range strings.FieldsFunc(c, func(r rune) bool { return r == ';' || r == '|' || r == '&' }) {
+			fs := strings.Fields(part)
+			if len(fs) > 0 {
+				verbs[strings.ToLower(fs[0])] = true
+			}
+		}
+	}
+	paths := map[string]bool{}
+	for _, r := range f.HTTPRequests {
+		fs := strings.Fields(r)
+		if len(fs) == 2 {
+			path := fs[1]
+			if i := strings.IndexByte(path, '?'); i >= 0 {
+				path = path[:i]
+			}
+			paths[Normalise(path)] = true
+		}
+	}
+	b.WriteString(strings.Join(sortedKeys(verbs), ","))
+	b.WriteString("|")
+	b.WriteString(strings.Join(sortedKeys(paths), ","))
+	if class == ScanOnly || class == ServiceProbe {
+		ports := append([]int{}, f.LocalPorts...)
+		sort.Ints(ports)
+		b.WriteString(fmt.Sprint(ports))
+	}
+	sum := sha256.Sum256([]byte(b.String()))
+	return hex.EncodeToString(sum[:6])
+}
+
+// Templates returns the normalised request paths and command templates of a
+// result, the units the novelty check works on.
+func (r Result) Templates() []string {
+	seen := map[string]bool{}
+	var out []string
+	add := func(s string) {
+		if s != "" && !seen[s] {
+			seen[s] = true
+			out = append(out, s)
+		}
+	}
+	for _, req := range r.Facts.HTTPRequests {
+		fs := strings.Fields(req)
+		if len(fs) == 2 {
+			path := fs[1]
+			if i := strings.IndexByte(path, '?'); i >= 0 {
+				path = path[:i]
+			}
+			add("http:" + Normalise(path))
+		}
+	}
+	for _, c := range r.Facts.Commands {
+		add("cmd:" + Normalise(c))
+	}
+	for _, p := range r.Facts.Payloads {
+		add("payload:" + Normalise(p))
+	}
+	return out
+}
+
+func sortedKeys(m map[string]bool) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// printable returns the payload as text if it is mostly printable, cut to n
+// bytes, else "" (binary protocols are left to PcapHub's dissector).
+func printable(b []byte, n int) string {
+	if len(b) > n {
+		b = b[:n]
+	}
+	good := 0
+	for _, c := range b {
+		if (c >= 0x20 && c < 0x7f) || c == '\n' || c == '\r' || c == '\t' {
+			good++
+		}
+	}
+	if len(b) == 0 || good*10 < len(b)*8 {
+		return ""
+	}
+	var sb strings.Builder
+	for _, c := range b {
+		if c >= 0x20 && c < 0x7f {
+			sb.WriteByte(c)
+		} else {
+			sb.WriteByte(' ')
+		}
+	}
+	return strings.TrimSpace(reSpaces.ReplaceAllString(sb.String(), " "))
 }
 
 func tags(class string, f Facts) []string {
@@ -249,6 +395,13 @@ func fingerprint(class string, f Facts) string {
 	}
 	sort.Strings(reqs)
 	b.WriteString(strings.Join(reqs, ";"))
+	b.WriteString("|")
+	pays := make([]string, 0, len(f.Payloads))
+	for _, p := range f.Payloads {
+		pays = append(pays, Normalise(p))
+	}
+	sort.Strings(pays)
+	b.WriteString(strings.Join(pays, ";"))
 	if class == ScanOnly || class == ServiceProbe {
 		// scans are the same scenario when they hit the same port set
 		ports := append([]int{}, f.LocalPorts...)
@@ -318,7 +471,7 @@ func normaliseURL(raw string) string {
 func urlsIn(cmd string) []string {
 	var out []string
 	for _, tok := range strings.Fields(cmd) {
-		tok = strings.Trim(tok, `"';` + "`")
+		tok = strings.Trim(tok, `"';`+"`")
 		if strings.HasPrefix(tok, "http://") || strings.HasPrefix(tok, "https://") || strings.HasPrefix(tok, "ftp://") || strings.HasPrefix(tok, "tftp://") {
 			out = append(out, tok)
 		}
