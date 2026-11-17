@@ -77,10 +77,10 @@ func (p *Pipeline) Run(ctx context.Context) (*Summary, error) {
 	if err != nil {
 		p.Log.Warn("reading cowrie log", "error", err)
 	}
-	if p.Cfg.Logs.Honeypots != "" {
-		more, err := honeylog.ReadHoneypotsFiles(p.Cfg.Logs.Honeypots)
+	if p.Cfg.Logs.OpenCanary != "" {
+		more, err := honeylog.ReadOpenCanaryFiles(p.Cfg.Logs.OpenCanary)
 		if err != nil {
-			p.Log.Warn("reading honeypots log", "error", err)
+			p.Log.Warn("reading opencanary log", "error", err)
 		}
 		events = append(events, more...)
 		sort.SliceStable(events, func(i, j int) bool { return events[i].Time.Before(events[j].Time) })

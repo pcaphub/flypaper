@@ -61,8 +61,8 @@ type Logs struct {
 	// Cowrie JSON log (cowrie.json, rotated copies with a date suffix are
 	// read too).
 	Cowrie string `yaml:"cowrie"`
-	// honeypots package JSON log (optional).
-	Honeypots string `yaml:"honeypots"`
+	// OpenCanary JSON log (optional).
+	OpenCanary string `yaml:"opencanary"`
 }
 
 type Select struct {
@@ -92,7 +92,8 @@ func Default() Config {
 			Retention: 7 * 24 * time.Hour,
 		},
 		Logs: Logs{
-			Cowrie: "/var/lib/flypaper/cowrie/log/cowrie.json",
+			Cowrie:     "/var/log/cowrie/cowrie.json",
+			OpenCanary: "/var/log/opencanary/opencanary.log",
 		},
 		Select: Select{
 			IdleGap:        5 * time.Minute,

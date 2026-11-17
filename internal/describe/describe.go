@@ -104,6 +104,18 @@ func Build(in Input) Meta {
 		}
 		b.WriteString("```\n")
 	}
+	if len(f.HTTPRequests) > 0 {
+		fmt.Fprintf(&b, "\n%d HTTP request(s) seen on the wire:\n\n```\n", len(f.HTTPRequests))
+		for i, r := range f.HTTPRequests {
+			if i >= 30 {
+				fmt.Fprintf(&b, "... %d more\n", len(f.HTTPRequests)-i)
+				break
+			}
+			b.WriteString(clean(r))
+			b.WriteString("\n")
+		}
+		b.WriteString("```\n")
+	}
 	if len(f.URLs) > 0 {
 		b.WriteString("\nDownload URLs (defanged):\n")
 		for _, u := range f.URLs {

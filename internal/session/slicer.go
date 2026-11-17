@@ -38,6 +38,7 @@ type Options struct {
 type Packet struct {
 	CI       gopacket.CaptureInfo
 	Data     []byte
+	Payload  []byte // transport payload (TCP/UDP), nil when none
 	Remote   net.IP
 	Local    net.IP
 	Proto    layers.IPProtocol
@@ -150,9 +151,9 @@ func SliceReader(r io.ReadSeeker, opt Options) ([]*Session, error) {
 		var pk Packet
 		switch {
 		case local[p.dstIP.String()] && !local[p.srcIP.String()]:
-			pk = Packet{CI: p.ci, Data: p.data, Remote: p.srcIP, Local: p.dstIP, Proto: p.proto, RemPort: p.srcPort, LocPort: p.dstPort, ToLocal: true}
+			pk = Packet{CI: p.ci, Data: p.data, Payload: p.payload, Remote: p.srcIP, Local: p.dstIP, Proto: p.proto, RemPort: p.srcPort, LocPort: p.dstPort, ToLocal: true}
 		case local[p.srcIP.String()] && !local[p.dstIP.String()]:
-			pk = Packet{CI: p.ci, Data: p.data, Remote: p.dstIP, Local: p.srcIP, Proto: p.proto, RemPort: p.dstPort, LocPort: p.srcPort}
+			pk = Packet{CI: p.ci, Data: p.data, Payload: p.payload, Remote: p.dstIP, Local: p.srcIP, Proto: p.proto, RemPort: p.dstPort, LocPort: p.srcPort}
 		default:
 			continue // local-local or unrelated
 		}
@@ -320,6 +321,7 @@ type parsed struct {
 	srcIP, dstIP     net.IP
 	proto            layers.IPProtocol
 	srcPort, dstPort int
+	payload          []byte
 }
 
 type parser struct {
@@ -363,8 +365,10 @@ func (p *parser) parse(data []byte, ci gopacket.CaptureInfo) (parsed, bool) {
 			out.srcIP, out.dstIP, out.proto, haveIP = p.ip6.SrcIP, p.ip6.DstIP, p.ip6.NextHeader, true
 		case layers.LayerTypeTCP:
 			out.srcPort, out.dstPort = int(p.tcp.SrcPort), int(p.tcp.DstPort)
+			out.payload = p.tcp.Payload
 		case layers.LayerTypeUDP:
 			out.srcPort, out.dstPort = int(p.udp.SrcPort), int(p.udp.DstPort)
+			out.payload = p.udp.Payload
 		}
 	}
 	if !haveIP {

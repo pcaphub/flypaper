@@ -49,6 +49,7 @@ type Facts struct {
 	TopCreds      []string // most tried "user:pass", up to 5
 	Commands      []string // in order, deduplicated consecutive repeats
 	URLs          []string // raw, caller defangs
+	HTTPRequests  []string // "METHOD path" read from the packets themselves
 	Hashes        []string
 	ClientVersion string
 	Forwards      []string
@@ -58,8 +59,8 @@ var (
 	reIPv4     = regexp.MustCompile(`\b(?:\d{1,3}\.){3}\d{1,3}\b`)
 	reHex      = regexp.MustCompile(`\b[0-9a-fA-F]{8,}\b`)
 	reNum      = regexp.MustCompile(`\b\d{3,}\b`)
-	reRandName = regexp.MustCompile(`\b[A-Za-z0-9_.-]*[0-9]{2,}[A-Za-z0-9_.-]*\b`)
 	reSpaces   = regexp.MustCompile(`\s+`)
+	reHTTPReq  = regexp.MustCompile(`^(GET|POST|HEAD|PUT|DELETE|OPTIONS|PATCH|PROPFIND|CONNECT|TRACE) (\S{1,400}) HTTP/1\.[01]\r?\n`)
 	reExploit  = regexp.MustCompile(`(?i)(\.\./|%2e%2e|/etc/passwd|cgi-bin|\$\{jndi:|<\?php|eval\(|base64_decode|wget\s|curl\s|/bin/sh|cmd=|exec\(|union\s+select|sleep\(\d|/shell|/boaform|/GponForm|/HNAP1|/setup\.cgi|/manager/html|/wp-login|/xmlrpc\.php|/\.env|/\.git/|/actuator|/solr/|/jmx|/console/|/_ignition)`)
 )
 
@@ -73,6 +74,20 @@ func Run(s *session.Session, evs []honeylog.Event) Result {
 	credCount := map[string]int{}
 	var lastCmd string
 	seenURL := map[string]bool{}
+	seenReq := map[string]bool{}
+	for _, pk := range s.Packets {
+		if !pk.ToLocal || len(pk.Payload) < 14 || !httpPort(pk.LocPort) {
+			continue
+		}
+		if m := reHTTPReq.FindSubmatch(pk.Payload[:min(len(pk.Payload), 512)]); m != nil {
+			req := string(m[1]) + " " + string(m[2])
+			if !seenReq[req] && len(f.HTTPRequests) < 100 {
+				seenReq[req] = true
+				f.HTTPRequests = append(f.HTTPRequests, req)
+			}
+			svc["http"] = true
+		}
+	}
 	for _, e := range evs {
 		if e.Service != "" {
 			svc[e.Service] = true
@@ -150,6 +165,8 @@ func classify(s *session.Session, f Facts) (string, int) {
 		return PortForward, 70
 	case len(f.LoginSuccess) > 0:
 		return SSHLoginSuccess, 60
+	case len(f.HTTPRequests) > 0:
+		return ServiceProbe, 40 + min(len(f.HTTPRequests), 10)
 	case f.LoginAttempts >= 3:
 		if hasTelnet && !hasSSH {
 			return TelnetIoT, 35
@@ -171,6 +188,11 @@ func webExploit(f Facts) bool {
 	}
 	for _, c := range f.Commands {
 		if reExploit.MatchString(c) {
+			return true
+		}
+	}
+	for _, r := range f.HTTPRequests {
+		if reExploit.MatchString(r) {
 			return true
 		}
 	}
@@ -220,6 +242,13 @@ func fingerprint(class string, f Facts) string {
 		b.WriteString(normaliseURL(u))
 		b.WriteString(";")
 	}
+	b.WriteString("|")
+	reqs := make([]string, 0, len(f.HTTPRequests))
+	for _, r := range f.HTTPRequests {
+		reqs = append(reqs, Normalise(r))
+	}
+	sort.Strings(reqs)
+	b.WriteString(strings.Join(reqs, ";"))
 	if class == ScanOnly || class == ServiceProbe {
 		// scans are the same scenario when they hit the same port set
 		ports := append([]int{}, f.LocalPorts...)
@@ -231,21 +260,48 @@ func fingerprint(class string, f Facts) string {
 }
 
 // Normalise masks the parts of a command line that change per victim or per
-// run: IP addresses, long hex strings (hashes, random names), long numbers,
-// and names with embedded digits (/tmp/x8f2k, bot.x86_64 stays because the
-// digit run is kept when it is part of a known arch token).
+// run: IP addresses, long hex strings (hashes), long numbers, and any token
+// carrying two or more digits (random file names like .x8f2k1, PIDs, ports).
+// Architecture tokens (x86_64, aarch64, mips64...) are kept because they
+// distinguish bot variants.
 func Normalise(s string) string {
 	s = strings.TrimSpace(s)
 	s = reSpaces.ReplaceAllString(s, " ")
+	for i, arch := range archTokens {
+		s = strings.ReplaceAll(s, arch, archPlaceholders[i])
+	}
 	s = reIPv4.ReplaceAllString(s, "IP")
 	s = reHex.ReplaceAllString(s, "HEX")
-	for _, arch := range []string{"x86_64", "i686", "i386", "arm7", "armv7l", "aarch64", "mips64"} {
-		s = strings.ReplaceAll(s, arch, strings.ToUpper(arch))
-	}
 	s = reNum.ReplaceAllString(s, "N")
-	s = reRandName.ReplaceAllString(s, "RND")
+	s = reToken.ReplaceAllStringFunc(s, func(tok string) string {
+		digits := 0
+		for _, r := range tok {
+			if r >= '0' && r <= '9' {
+				digits++
+			}
+		}
+		if digits >= 2 {
+			return "RND"
+		}
+		return tok
+	})
+	for i, arch := range archTokens {
+		s = strings.ReplaceAll(s, archPlaceholders[i], arch)
+	}
 	return strings.ToLower(s)
 }
+
+var (
+	archTokens       = []string{"x86_64", "aarch64", "armv7l", "armv6l", "armv5l", "mips64el", "mips64", "mipsel", "i686", "i586", "i386", "arm7", "arm6", "arm5", "arm4", "sh4", "m68k", "ppc", "spc"}
+	archPlaceholders = func() []string {
+		out := make([]string, len(archTokens))
+		for i := range archTokens {
+			out[i] = fmt.Sprintf("\x00ARCH%c\x00", 'A'+i)
+		}
+		return out
+	}()
+	reToken = regexp.MustCompile(`[A-Za-z0-9_.-]+`)
+)
 
 func normaliseURL(raw string) string {
 	u, err := url.Parse(raw)
@@ -268,6 +324,14 @@ func urlsIn(cmd string) []string {
 		}
 	}
 	return out
+}
+
+func httpPort(p int) bool {
+	switch p {
+	case 80, 81, 8000, 8008, 8080, 8081, 8088, 8443, 8888, 9000, 9090:
+		return true
+	}
+	return false
 }
 
 func serviceName(port int) string {

@@ -166,9 +166,9 @@ func check(ctx context.Context, log *slog.Logger, cfg config.Config) int {
 		_, err = os.Stat(cfg.Logs.Cowrie)
 		ok("cowrie log "+cfg.Logs.Cowrie, err)
 	}
-	if cfg.Logs.Honeypots != "" {
-		_, err = os.Stat(cfg.Logs.Honeypots)
-		ok("honeypots log "+cfg.Logs.Honeypots, err)
+	if cfg.Logs.OpenCanary != "" {
+		_, err = os.Stat(cfg.Logs.OpenCanary)
+		ok("opencanary log "+cfg.Logs.OpenCanary, err)
 	}
 	st, err := state.Open(cfg.StateDir)
 	ok("state directory "+cfg.StateDir, err)

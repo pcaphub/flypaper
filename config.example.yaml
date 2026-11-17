@@ -24,8 +24,8 @@ capture:
   retention: 168h                    # delete processed ring files after 7 days (0 = keep)
 
 logs:
-  cowrie: /var/lib/flypaper/cowrie/log/cowrie.json
-  honeypots: ""                      # /var/lib/flypaper/honeypots/logs/honeypots.json
+  cowrie: /var/log/cowrie/cowrie.json
+  opencanary: /var/log/opencanary/opencanary.log
 
 select:
   idle_gap: 5m        # a remote that goes quiet for this long starts a new session
