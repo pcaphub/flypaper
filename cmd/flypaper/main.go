@@ -42,23 +42,16 @@ func main() {
 		fs.Usage()
 		os.Exit(2)
 	}
-	// allow flags before or after the subcommand
-	args := os.Args[1:]
-	var cmd string
+	// Flags may come before or after the subcommand: the flag package stops
+	// at the first non-flag word, which is the command; parse what follows
+	// it as flags again.
+	_ = fs.Parse(os.Args[1:])
+	cmd := fs.Arg(0)
 	var rest []string
-	for i := 0; i < len(args); i++ {
-		if len(args[i]) > 0 && args[i][0] != '-' && cmd == "" {
-			cmd = args[i]
-			rest = args[i+1:]
-			_ = fs.Parse(append(args[:i:i], rest...))
-			break
-		}
+	if fs.NArg() > 1 {
+		_ = fs.Parse(fs.Args()[1:])
+		rest = fs.Args()
 	}
-	if cmd == "" {
-		_ = fs.Parse(args)
-		cmd = fs.Arg(0)
-	}
-	rest = fs.Args()
 
 	var h slog.Handler
 	if *jsonLog {

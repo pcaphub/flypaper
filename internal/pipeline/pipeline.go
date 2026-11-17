@@ -128,7 +128,7 @@ func (p *Pipeline) Run(ctx context.Context) (*Summary, error) {
 		sum.Files++
 		for _, s := range sessions {
 			sum.Sessions++
-			evs := index.Between(s.Remote, s.Start, s.End, 2*time.Minute)
+			evs := index.Between(s.Remote, s.Start, s.End, 45*time.Second)
 			res := classify.RunWith(s, evs, copt)
 			p.trimBruteforce(s, evs, res)
 			if len(s.Packets) < p.Cfg.Select.MinPackets {
@@ -192,8 +192,10 @@ func (p *Pipeline) closedRingFiles() ([]string, error) {
 
 func (p *Pipeline) sliceOptions() session.Options {
 	opt := session.Options{
-		ExcludePorts: map[int]bool{},
-		IdleGap:      p.Cfg.Select.IdleGap,
+		ExcludePorts:      map[int]bool{},
+		UseInterfaceAddrs: len(p.Cfg.Capture.LocalIPs) == 0,
+		KeepOutbound:      p.Cfg.Capture.KeepOutbound,
+		IdleGap:           p.Cfg.Select.IdleGap,
 		MaxPackets:   p.Cfg.Select.MaxPackets,
 		MaxBytes:     p.Cfg.Select.MaxBytes,
 		MinPackets:   1, // the pipeline applies MinPackets after trimming

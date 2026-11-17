@@ -20,7 +20,13 @@ import (
 
 // Options control slicing.
 type Options struct {
-	LocalIPs     []net.IP      // the honeypot's own addresses; empty = auto-detect
+	LocalIPs []net.IP // the honeypot's own addresses; empty = auto-detect
+	// UseInterfaceAddrs adds this host's own interface addresses to LocalIPs
+	// (the collector runs on the honeypot, so that is the right default).
+	UseInterfaceAddrs bool
+	// KeepOutbound keeps flows the honeypot itself opened (apt, DNS, Cowrie's
+	// emulated wget). Off by default: a capture is one attacker's session.
+	KeepOutbound bool
 	ExcludePorts map[int]bool  // management ports, dropped at either end
 	ExcludeIPs   []net.IP      // management peers, dropped
 	IdleGap      time.Duration // new session after this much silence from one remote
@@ -138,15 +144,17 @@ func SliceReader(r io.ReadSeeker, opt Options) ([]*Session, error) {
 		return nil, nil
 	}
 
-	local := localSet(opt.LocalIPs, counts)
+	local := localSet(opt, pkts, counts)
 	excludeIP := map[string]bool{}
 	for _, ip := range opt.ExcludeIPs {
 		excludeIP[ip.String()] = true
 	}
 
 	// Second pass: orient each packet (remote vs local), drop management
-	// traffic, group by remote.
+	// traffic and flows the honeypot opened itself, group by remote.
 	byRemote := map[string][]Packet{}
+	outbound := map[string]bool{} // flow key -> first packet went local -> remote
+	flowSeen := map[string]bool{}
 	for _, p := range pkts {
 		var pk Packet
 		switch {
@@ -161,6 +169,14 @@ func SliceReader(r io.ReadSeeker, opt Options) ([]*Session, error) {
 			continue
 		}
 		if pk.Remote.IsLoopback() || pk.Remote.IsLinkLocalUnicast() || pk.Remote.IsMulticast() || pk.Remote.IsUnspecified() {
+			continue
+		}
+		fk := pk.Remote.String() + "/" + Flow{Proto: pk.Proto, RemPort: pk.RemPort, LocPort: pk.LocPort}.Key()
+		if !flowSeen[fk] {
+			flowSeen[fk] = true
+			outbound[fk] = !pk.ToLocal
+		}
+		if outbound[fk] && !opt.KeepOutbound {
 			continue
 		}
 		byRemote[pk.Remote.String()] = append(byRemote[pk.Remote.String()], pk)
@@ -291,20 +307,43 @@ func (s *Session) Write(path string) (int64, error) {
 	return st.Size(), nil
 }
 
-// localSet picks the honeypot's addresses: the configured ones, or the single
-// address seen in the most packets (the honeypot is one end of everything).
-func localSet(configured []net.IP, counts map[string]int) map[string]bool {
+// localSet picks the honeypot's addresses: the configured ones, plus this
+// host's interface addresses when asked, else a heuristic: the address that
+// talks to the most distinct peers (the honeypot is one end of everything,
+// an attacker talks to one host), with packet count as the tie-break.
+func localSet(opt Options, pkts []parsed, counts map[string]int) map[string]bool {
 	local := map[string]bool{}
-	for _, ip := range configured {
+	for _, ip := range opt.LocalIPs {
 		local[ip.String()] = true
+	}
+	if opt.UseInterfaceAddrs {
+		if addrs, err := net.InterfaceAddrs(); err == nil {
+			for _, a := range addrs {
+				if ipn, ok := a.(*net.IPNet); ok && !ipn.IP.IsLoopback() && !ipn.IP.IsLinkLocalUnicast() {
+					local[ipn.IP.String()] = true
+				}
+			}
+		}
 	}
 	if len(local) > 0 {
 		return local
 	}
-	best, bestN := "", 0
-	for ip, n := range counts {
-		if n > bestN {
-			best, bestN = ip, n
+	peers := map[string]map[string]bool{}
+	for _, p := range pkts {
+		a, b := p.srcIP.String(), p.dstIP.String()
+		if peers[a] == nil {
+			peers[a] = map[string]bool{}
+		}
+		if peers[b] == nil {
+			peers[b] = map[string]bool{}
+		}
+		peers[a][b] = true
+		peers[b][a] = true
+	}
+	best, bestPeers, bestN := "", -1, 0
+	for ip, set := range peers {
+		if len(set) > bestPeers || (len(set) == bestPeers && counts[ip] > bestN) || (len(set) == bestPeers && counts[ip] == bestN && ip < best) {
+			best, bestPeers, bestN = ip, len(set), counts[ip]
 		}
 	}
 	if best != "" {

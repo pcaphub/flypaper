@@ -1,0 +1,20 @@
+#cloud-config
+# flypaper: paste as user-data when creating the VPS (Hetzner, DigitalOcean,
+# Vultr and most providers support cloud-init). Fill in the three values.
+#
+# Note: user-data is visible to anyone with access to the provider account,
+# so use an upload-only PcapHub key (it can only create private captures).
+package_update: true
+write_files:
+  - path: /etc/flypaper/install.env
+    permissions: "0600"
+    owner: root:root
+    content: |
+      PCAPHUB_API_KEY=phk_REPLACE_ME
+      FLYPAPER_NAME=hel-1
+      FLYPAPER_REGION=eu-north
+      # MGMT_SSH_PORT=22222
+      # FLYPAPER_DRY_RUN=1
+runcmd:
+  - [ bash, -c, "curl -fsSL https://raw.githubusercontent.com/pcaphub/flypaper/main/install/install.sh -o /root/install.sh" ]
+  - [ bash, -c, "set -a; . /etc/flypaper/install.env; set +a; bash /root/install.sh > /var/log/flypaper-install.log 2>&1" ]

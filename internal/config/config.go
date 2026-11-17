@@ -47,9 +47,11 @@ type Capture struct {
 	Dir     string        `yaml:"dir"`
 	Pattern string        `yaml:"pattern"` // glob, default "*.pcap*"
 	MinAge  time.Duration `yaml:"min_age"`
-	// IPs of the honeypot itself. Empty: auto-detected per file as the address
-	// that appears in the most packets.
+	// IPs of the honeypot itself. Empty: this host's interface addresses.
 	LocalIPs []string `yaml:"local_ips"`
+	// KeepOutbound keeps connections the honeypot opened itself (updates,
+	// DNS, Cowrie's emulated downloads). Off: one capture = one attacker.
+	KeepOutbound bool `yaml:"keep_outbound"`
 	// Traffic to leave out of every slice (management SSH port, WireGuard,
 	// provider metadata). Ports apply to either end.
 	ExcludePorts []int    `yaml:"exclude_ports"`
@@ -144,10 +146,14 @@ func Load(path string) (Config, error) {
 	}
 	if cfg.PcapHub.APIKey == "" && cfg.PcapHub.APIKeyFile != "" {
 		kb, err := os.ReadFile(cfg.PcapHub.APIKeyFile)
-		if err != nil {
+		switch {
+		case err == nil:
+			cfg.PcapHub.APIKey = strings.TrimSpace(string(kb))
+		case os.IsNotExist(err) && cfg.DryRun:
+			// a dry-run install has no key yet; the file appears when it goes live
+		default:
 			return cfg, fmt.Errorf("api_key_file: %w", err)
 		}
-		cfg.PcapHub.APIKey = strings.TrimSpace(string(kb))
 	}
 	if cfg.PcapHub.APIKey == "" {
 		cfg.PcapHub.APIKey = os.Getenv("PCAPHUB_API_KEY")

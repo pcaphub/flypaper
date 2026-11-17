@@ -96,7 +96,7 @@ func Build(in Input) Meta {
 		fmt.Fprintf(&b, "Accepted credentials: %s.\n", strings.Join(quoteAll(f.LoginSuccess), ", "))
 	}
 	if len(f.Commands) > 0 {
-		fmt.Fprintf(&b, "\n%d commands after login:\n\n```\n", len(f.Commands))
+		fmt.Fprintf(&b, "\n%d command(s) or queries recorded by the honeypots:\n\n```\n", len(f.Commands))
 		for i, c := range f.Commands {
 			if i >= 40 {
 				fmt.Fprintf(&b, "... %d more\n", len(f.Commands)-i)
