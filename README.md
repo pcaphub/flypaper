@@ -15,7 +15,7 @@ curl -fsSL https://raw.githubusercontent.com/pcaphub/flypaper/main/install/insta
 sudo PCAPHUB_API_KEY=phk_... FLYPAPER_NAME=hel-1 bash install.sh
 ```
 
-The installer moves your real SSH to port 2222 (key auth only), opens the honeypot ports, installs the honeypots and the collector as systemd services, and runs `flypaper check`. Read `install/install.sh` first; it is short and it is your machine.
+The installer moves your real SSH to port 22222 (`MGMT_SSH_PORT`, key auth only), opens the honeypot ports, installs the honeypots and the collector as systemd services, and runs `flypaper check`. Read `install/install.sh` first; it is short and it is your machine.
 
 The API key needs only the `upload` scope (PcapHub, Settings, API Keys). A key with that scope can create private captures and edit their descriptions and nothing else, so a compromised honeypot cannot touch anything you care about.
 
