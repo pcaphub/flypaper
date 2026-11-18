@@ -506,7 +506,7 @@ func urlsIn(cmd string) []string {
 
 func httpPort(p int) bool {
 	switch p {
-	case 80, 81, 8000, 8008, 8080, 8081, 8088, 8443, 8888, 9000, 9090:
+	case 80, 81, 8000, 8008, 8080, 8081, 8088, 8443, 8888, 9000, 9090, 7547, 2375, 9200, 5601:
 		return true
 	}
 	return false
@@ -521,8 +521,12 @@ func serviceName(port int) string {
 		return "ssh"
 	case 23, 2223:
 		return "telnet"
-	case 80, 8080, 8000, 8888, 443, 8443:
+	case 80, 81, 8080, 8000, 8008, 8081, 8088, 8888, 9000, 9090, 443, 8443, 7547:
 		return "http"
+	case 2375:
+		return "docker"
+	case 5601:
+		return "kibana"
 	case 21:
 		return "ftp"
 	case 25, 587:

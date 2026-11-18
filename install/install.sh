@@ -17,6 +17,7 @@
 #   COWRIE_VERSION         default 3.1.6
 #   OPENCANARY_VERSION     default 0.9.10
 #   OPENCANARY_SERVICES    default "http ftp mysql redis rdp vnc mssql tftp httpproxy smbbanner"
+#   HTTP_EXTRA_PORTS       more ports answered by the web honeypot (nftables redirect), default "81 8000 8081 8088 8443 8888 9000 7547 2375 9200 5601"
 #   CAPTURE_IFACE          default: the default-route interface
 #
 # What it does, in order: packages; move sshd to MGMT_SSH_PORT (key auth only
@@ -36,6 +37,10 @@ set -euo pipefail
 : "${COWRIE_VERSION:=3.1.6}"
 : "${OPENCANARY_VERSION:=0.9.10}"
 : "${OPENCANARY_SERVICES:=http ftp mysql redis rdp vnc mssql tftp httpproxy smbbanner}"
+# Extra ports answered by the OpenCanary web honeypot via an nftables redirect
+# (install/http-ports.sh). Empty to skip.
+: "${HTTP_EXTRA_PORTS:=81 8000 8081 8088 8443 8888 9000 7547 2375 9200 5601}"
+: "${HTTP_PORTS_SCRIPT:=https://raw.githubusercontent.com/pcaphub/flypaper/main/install/http-ports.sh}"
 : "${CAPTURE_IFACE:=}"
 REPO="pcaphub/flypaper"
 
@@ -121,6 +126,16 @@ for s in $OPENCANARY_SERVICES; do
 done
 ufw --force enable >/dev/null
 ufw status | sed 's/^/    /'
+
+if [ -n "$HTTP_EXTRA_PORTS" ] && echo "$OPENCANARY_SERVICES" | grep -qw http; then
+  log "Redirecting extra HTTP ports to the web honeypot"
+  if [ -f "$HTTP_PORTS_SCRIPT" ]; then
+    cp "$HTTP_PORTS_SCRIPT" /root/http-ports.sh
+  else
+    curl -fsSL "$HTTP_PORTS_SCRIPT" -o /root/http-ports.sh
+  fi
+  HTTP_EXTRA_PORTS="$HTTP_EXTRA_PORTS" HTTP_TARGET_PORT=80 MGMT_SSH_PORT="$MGMT_SSH_PORT" bash /root/http-ports.sh | sed 's/^/    /'
+fi
 
 # ---------------------------------------------------------------- users, dirs
 log "Creating users and directories"
