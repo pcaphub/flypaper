@@ -38,7 +38,7 @@ New techniques are caught without anyone writing a rule first: HTTP request line
 
 Classes, lowest to highest score: `scan-only`, `ssh-bruteforce`, `login-bruteforce` (VNC, MSSQL, MySQL, FTP, RDP password sprays), `telnet-iot`, `service-probe`, `ssh-login-success`, `ssh-port-forward`, `commands-executed`, `web-exploit-attempt`, `malware-download`.
 
-Descriptions are templated from the facts (attacker-supplied credentials, commands, defanged URLs, SHA-256 of downloads) and, once PcapHub has processed the capture, extended with the Suricata signatures that fired.
+Titles say what the attacker did, in the words a visitor would search for: `Telnet IoT bot as root:xc3511: enable, system, shell, +3 more`, `Web exploit attempt on :8080: PHPUnit eval-stdin RCE (CVE-2017-9841)`, `RDP probe on :3389, connection cookie "hello"`, `Port sweep: 443, 7443, 8443, 9443, 10443`. The collector, region and date are tags and the first line of the description. Descriptions are templated from the facts (attacker-supplied credentials, commands, defanged URLs, SHA-256 of downloads) and, once PcapHub has processed the capture, extended with the Suricata signatures that fired.
 
 ## Commands
 

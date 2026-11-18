@@ -512,6 +512,9 @@ func httpPort(p int) bool {
 	return false
 }
 
+// ServiceName is the honeypot service usually behind a port, "" if unknown.
+func ServiceName(port int) string { return serviceName(port) }
+
 func serviceName(port int) string {
 	switch port {
 	case 22, 2222:

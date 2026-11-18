@@ -42,12 +42,8 @@ const maxTags = 10
 // Build renders the metadata.
 func Build(in Input) Meta {
 	s, r, f := in.Session, in.Result, in.Result.Facts
-	day := s.Start.UTC().Format("2006-01-02")
 
-	title := fmt.Sprintf("%s: %s from %s (%s)", in.Collector, humanClass(r.Class, r.Facts.Services), Defang(s.Remote.String()), day)
-	if len(title) > 200 {
-		title = title[:200]
-	}
+	title := Title(r, s)
 
 	var b strings.Builder
 	fmt.Fprintf(&b, "Honeypot session captured by flypaper collector %q", in.Collector)
@@ -266,38 +262,6 @@ func clean(s string) string {
 // ratioAfterSessions: show the upload percentage only once this many
 // sessions were seen, same threshold as the pipeline's ratio guard.
 const ratioAfterSessions = 200
-
-func humanClass(c string, services []string) string {
-	switch c {
-	case classify.ScanOnly:
-		return "port scan"
-	case classify.SSHBruteforce:
-		return "SSH brute force"
-	case classify.LoginBruteforce:
-		// name the service the passwords were tried against
-		for _, s := range services {
-			if s != "tcp" && s != "http" {
-				return strings.ToUpper(s) + " password spray"
-			}
-		}
-		return "password spray"
-	case classify.TelnetIoT:
-		return "Telnet IoT bot"
-	case classify.SSHLoginSuccess:
-		return "SSH login"
-	case classify.CommandsRun:
-		return "commands after login"
-	case classify.MalwareDownload:
-		return "malware download"
-	case classify.WebExploit:
-		return "web exploit attempt"
-	case classify.PortForward:
-		return "SSH port forwarding abuse"
-	case classify.ServiceProbe:
-		return "service probe"
-	}
-	return c
-}
 
 func humanDuration(d time.Duration) string {
 	switch {
