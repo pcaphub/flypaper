@@ -31,9 +31,12 @@ func Title(r classify.Result, s *session.Session) string {
 	case classify.ServiceExploit:
 		t = fmt.Sprintf("%s exploit attempt: %s", serviceLabel(primaryService(f, "")), commandSummary(f.Commands, 3))
 	case classify.TelnetIoT:
-		if len(f.Commands) > 0 {
+		switch {
+		case len(f.Commands) > 0:
 			t = fmt.Sprintf("Telnet IoT bot%s: %s", asUser(f), commandSummary(f.Commands, 3))
-		} else {
+		case len(f.LoginSuccess) > 0:
+			t = "Telnet login accepted" + asUser(f) + ", no commands"
+		default:
 			t = sprayTitle("Telnet", f)
 		}
 	case classify.PortForward:
@@ -269,7 +272,14 @@ func sprayTitle(svc string, f classify.Facts) string {
 	}
 	t := fmt.Sprintf("%s brute force: %d login attempts", svc, f.LoginAttempts)
 	if len(f.TopCreds) > 0 {
-		t += ", " + strings.Join(f.TopCreds[:min(2, len(f.TopCreds))], ", ")
+		creds := make([]string, 0, 2)
+		for _, c := range f.TopCreds[:min(2, len(f.TopCreds))] {
+			if strings.HasSuffix(c, ":") {
+				c += "(empty)"
+			}
+			creds = append(creds, c)
+		}
+		t += ", " + strings.Join(creds, ", ")
 	}
 	if f.ClientVersion != "" {
 		t += " (" + shortClient(f.ClientVersion) + ")"

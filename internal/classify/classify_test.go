@@ -272,3 +272,40 @@ func TestHTTPPortsFoldIntoOneScenario(t *testing.T) {
 		t.Errorf("double-encoded path: %s", c.Class)
 	}
 }
+
+// A TLS hello sent to the Redis port is logged by OpenCanary as a "command";
+// it is not one and must not make the probe a commands scenario.
+func TestBinaryCommandIsNotACommand(t *testing.T) {
+	s := &session.Session{Remote: net.ParseIP("198.51.100.10"), LinkType: layers.LinkTypeEthernet, LocalPorts: []int{6379}}
+	at := time.Date(2026, 11, 18, 21, 0, 0, 0, time.UTC)
+	payload := []byte("\x16\x03\x01\x00\xa5\x01\x00\x00\xa1\x03\x03{ w \x8bJA\x9c g\xe2kn} \x81\xd6, 5\xff")
+	ci := gopacket.CaptureInfo{Timestamp: at, CaptureLength: len(payload), Length: len(payload)}
+	s.Packets = []session.Packet{{CI: ci, Data: payload, Payload: payload, Remote: s.Remote, Proto: layers.IPProtocolTCP, RemPort: 50000, LocPort: 6379, ToLocal: true}}
+	s.Flows = []session.Flow{{Proto: layers.IPProtocolTCP, RemPort: 50000, LocPort: 6379, Pkts: 8}}
+	s.Start, s.End, s.TotalPkts = at, at.Add(time.Second), 8
+	evs := []honeylog.Event{{Time: at, Source: "opencanary", Service: "redis", Kind: "command", SrcIP: s.Remote, SrcPort: 50000, DstPort: 6379, Input: string(payload)}}
+	r := Run(s, evs)
+	if len(r.Facts.Commands) != 0 {
+		t.Errorf("binary blob kept as command: %q", r.Facts.Commands)
+	}
+	if r.Class != ServiceProbe || r.Score != 35 {
+		t.Errorf("class %s score %d, want %s 35", r.Class, r.Score, ServiceProbe)
+	}
+}
+
+// A Telnet login that is accepted and followed by nothing is a telnet-iot
+// scenario, not an SSH one.
+func TestTelnetLoginWithoutCommandsIsTelnetIoT(t *testing.T) {
+	s := &session.Session{Remote: net.ParseIP("198.51.100.11"), LinkType: layers.LinkTypeEthernet, LocalPorts: []int{23}}
+	at := time.Date(2026, 11, 18, 21, 0, 0, 0, time.UTC)
+	s.Flows = []session.Flow{{Proto: layers.IPProtocolTCP, RemPort: 50001, LocPort: 23, Pkts: 40}}
+	s.Start, s.End, s.TotalPkts = at, at.Add(5*time.Second), 40
+	evs := []honeylog.Event{
+		{Time: at, Source: "cowrie", Service: "telnet", Kind: "login_failed", SrcIP: s.Remote, SrcPort: 50001, DstPort: 23, Username: "root", Password: "vizxv"},
+		{Time: at.Add(time.Second), Source: "cowrie", Service: "telnet", Kind: "login_success", SrcIP: s.Remote, SrcPort: 50001, DstPort: 23, Username: "root", Password: "cxlinux"},
+	}
+	r := Run(s, evs)
+	if r.Class != TelnetIoT || r.Score != 50 {
+		t.Errorf("class %s score %d, want %s 50", r.Class, r.Score, TelnetIoT)
+	}
+}

@@ -138,7 +138,9 @@ func RunWith(s *session.Session, evs []honeylog.Event, opt Options) Result {
 			f.LoginAttempts++
 			f.LoginSuccess = append(f.LoginSuccess, e.Username+":"+e.Password)
 		case "command":
-			cmd := strings.TrimSpace(e.Input)
+			// a TLS hello or other binary blob sent to a text protocol is
+			// logged as a command by the honeypot; it is not one
+			cmd := strings.TrimSpace(printable([]byte(e.Input), 1000))
 			if cmd != "" && cmd != lastCmd {
 				f.Commands = append(f.Commands, cmd)
 				lastCmd = cmd
@@ -243,6 +245,9 @@ func classify(s *session.Session, f Facts, opt Options) (string, int) {
 	case len(f.Forwards) > 0:
 		return PortForward, 70
 	case len(f.LoginSuccess) > 0:
+		if hasTelnet && !hasSSH {
+			return TelnetIoT, 50 // a bot that logged in and left
+		}
 		return SSHLoginSuccess, 60
 	case len(f.HTTPRequests) > 0:
 		return ServiceProbe, 40 + min(len(f.HTTPRequests), 10)
