@@ -214,3 +214,37 @@ func TestLogBodyReplacesWireFirstSegment(t *testing.T) {
 		t.Errorf("payloads = %d samples, first len %d (want 1 sample of %d)", len(r.Facts.Payloads), len(r.Facts.Payloads[0]), len(body))
 	}
 }
+
+// Protocol commands are not a shell: Redis INFO/PING is a probe, Redis
+// CONFIG SET dir /var/spool/cron is an exploit attempt, and only Cowrie's
+// shell makes commands-executed.
+func TestProtocolCommandsAreNotAShell(t *testing.T) {
+	mk := func(cmds ...string) (*session.Session, []honeylog.Event) {
+		s := &session.Session{Remote: net.ParseIP("198.51.100.20"), LinkType: layers.LinkTypeEthernet, LocalPorts: []int{6379}, TotalPkts: 12}
+		at := time.Date(2026, 11, 18, 10, 0, 0, 0, time.UTC)
+		s.Start, s.End = at, at.Add(time.Second)
+		s.Flows = []session.Flow{{Proto: layers.IPProtocolTCP, RemPort: 51000, LocPort: 6379, Pkts: 12}}
+		var evs []honeylog.Event
+		for i, c := range cmds {
+			evs = append(evs, honeylog.Event{Time: at.Add(time.Duration(i) * 100 * time.Millisecond), Source: "opencanary", Service: "redis", Kind: "command", SrcIP: s.Remote, Input: c})
+		}
+		return s, evs
+	}
+	s, evs := mk("PING", "INFO")
+	if r := Run(s, evs); r.Class != ServiceProbe || r.Score != 45 {
+		t.Errorf("redis probe: %s %d", r.Class, r.Score)
+	}
+	s, evs = mk("INFO", "CONFIG SET dir /var/spool/cron", "CONFIG SET dbfilename root", "SAVE")
+	if r := Run(s, evs); r.Class != ServiceExploit {
+		t.Errorf("redis cron write: %s", r.Class)
+	}
+	// Cowrie shell commands still make commands-executed
+	s2 := &session.Session{Remote: net.ParseIP("198.51.100.21"), LinkType: layers.LinkTypeEthernet, LocalPorts: []int{22}, TotalPkts: 40}
+	s2.Start = time.Date(2026, 11, 18, 10, 0, 0, 0, time.UTC)
+	s2.End = s2.Start.Add(time.Minute)
+	ev2 := []honeylog.Event{{Time: s2.Start, Source: "cowrie", Service: "ssh", Kind: "login_success", SrcIP: s2.Remote, Username: "root", Password: "x"},
+		{Time: s2.Start.Add(time.Second), Source: "cowrie", Service: "ssh", Kind: "command", SrcIP: s2.Remote, Input: "uname -a"}}
+	if r := Run(s2, ev2); r.Class != CommandsRun {
+		t.Errorf("ssh shell: %s", r.Class)
+	}
+}

@@ -77,6 +77,8 @@ func Build(in Input) Meta {
 		b.WriteString("\n")
 	case classify.ServiceProbe:
 		fmt.Fprintf(&b, "A probe of %s with payload exchanged; see the stream for the protocol handshake and any commands.\n", strings.Join(f.Services, ", "))
+	case classify.ServiceExploit:
+		fmt.Fprintf(&b, "Commands sent to %s match a known abuse pattern (for example writing files through the service's configuration or loading a module); the honeypot emulates the service and executed nothing.\n", strings.Join(f.Services, ", "))
 	}
 	if f.LoginAttempts > 0 {
 		fmt.Fprintf(&b, "%d login attempts", f.LoginAttempts)

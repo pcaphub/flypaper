@@ -43,7 +43,7 @@ func TestTitles(t *testing.T) {
 		{"http probe", classify.Result{Class: classify.ServiceProbe, Facts: classify.Facts{Services: []string{"http"}, LocalPorts: []int{8080}, HTTPRequests: []string{"GET /", "GET /favicon.ico", "GET /robots.txt", "GET /sitemap.xml", "GET /admin"}}}, sess(5, 8080),
 			"HTTP probe on :8080: /, /favicon.ico, /robots.txt (+2)"},
 		{"redis", classify.Result{Class: classify.ServiceProbe, Facts: classify.Facts{Services: []string{"redis"}, LocalPorts: []int{6379}, Commands: []string{"INFO", "CONFIG SET dir /var/spool/cron", "SET x y"}}}, sess(1, 6379),
-			"REDIS probe on :6379: INFO, CONFIG SET, SET x"},
+			"Redis probe on :6379: INFO, CONFIG SET, SET x"},
 		{"sweep", classify.Result{Class: classify.ScanOnly, Facts: classify.Facts{LocalPorts: []int{10443, 443, 8443, 7443, 9443}}}, sess(5, 443, 7443, 8443, 9443, 10443),
 			"Port sweep: 443, 7443, 8443, 9443, 10443"},
 		{"one port", classify.Result{Class: classify.ScanOnly, Facts: classify.Facts{LocalPorts: []int{445}}}, sess(6, 445),
@@ -69,5 +69,26 @@ func TestTitleIsBounded(t *testing.T) {
 	}
 	if strings.Contains(Title(classify.Result{Class: classify.ScanOnly}, sess(0)), "\n") {
 		t.Error("newline in title")
+	}
+}
+
+func TestTitleSafe(t *testing.T) {
+	cases := map[string]string{
+		"Telnet IoT bot as enable\\x00:linuxshell\\x00: system":        "Telnet IoT bot as enable:linuxshell: system",
+		"Redis session: info, \x00\x01\xff\xfe S O \x80\x81G, +1 more": "Redis session: info, ? S O ?G, +1 more",
+		"plain title":         "plain title",
+		"tabs\tand\nnewlines": "tabs and newlines",
+	}
+	for in, want := range cases {
+		if got := titleSafe(in); got != want {
+			t.Errorf("titleSafe(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestServiceExploitTitle(t *testing.T) {
+	r := classify.Result{Class: classify.ServiceExploit, Facts: classify.Facts{Services: []string{"redis"}, LocalPorts: []int{6379}, Commands: []string{"INFO", "CONFIG SET dir /var/spool/cron", "CONFIG SET dbfilename root", "SAVE"}}}
+	if got := Title(r, sess(1, 6379)); got != "Redis exploit attempt: INFO, CONFIG SET, SAVE, +1 more" {
+		t.Errorf("got %q", got)
 	}
 }

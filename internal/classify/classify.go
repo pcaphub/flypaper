@@ -29,6 +29,7 @@ const (
 	WebExploit      = "web-exploit-attempt"
 	PortForward     = "ssh-port-forward"
 	ServiceProbe    = "service-probe"
+	ServiceExploit  = "service-exploit-attempt" // redis/mysql/snmp... command with a known abuse pattern
 )
 
 // Result is what the selector and the describer consume.
@@ -50,7 +51,8 @@ type Facts struct {
 	LoginAttempts int
 	LoginSuccess  []string // "user:pass" (attacker supplied, safe to show)
 	TopCreds      []string // most tried "user:pass", up to 5
-	Commands      []string // in order, deduplicated consecutive repeats
+	Commands      []string
+	ShellCommands int      // commands typed into Cowrie's shell (ssh, telnet); the rest are protocol commands (redis, snmp, ...) // in order, deduplicated consecutive repeats
 	URLs          []string // raw, caller defangs
 	HTTPRequests  []string // "METHOD path" read from the packets themselves
 	Payloads      []string // first bytes of POST bodies and of non-HTTP service payloads (printable)
@@ -65,7 +67,7 @@ var (
 	reNum     = regexp.MustCompile(`\b\d{3,}\b`)
 	reSpaces  = regexp.MustCompile(`\s+`)
 	reHTTPReq = regexp.MustCompile(`^(GET|POST|HEAD|PUT|DELETE|OPTIONS|PATCH|PROPFIND|CONNECT|TRACE) (\S{1,400}) HTTP/1\.[01]\r?\n`)
-	reExploit = regexp.MustCompile(`(?i)(\.\./|%2e%2e|/etc/passwd|cgi-bin|\$\{jndi:|<\?php|eval\(|base64_decode|php://input|allow_url_include|auto_prepend_file|system\(|passthru\(|shell_exec\(|assert\(|\bphpinfo\(|/vendor/phpunit|/eval-stdin\.php|/think/app|invokefunction|wget\s|curl\s|/bin/sh|cmd=|exec\(|union\s+select|sleep\(\d|/shell|/boaform|/GponForm|/HNAP1|/setup\.cgi|/manager/html|/wp-login|/xmlrpc\.php|/\.env|/\.git/|/actuator|/solr/|/jmx|/console/|/_ignition)`)
+	reExploit = regexp.MustCompile(`(?i)(\.\./|%2e%2e|/etc/passwd|cgi-bin|\$\{jndi:|<\?php|eval\(|base64_decode|php://input|allow_url_include|auto_prepend_file|system\(|passthru\(|shell_exec\(|assert\(|\bphpinfo\(|/vendor/phpunit|/eval-stdin\.php|/think/app|invokefunction|wget\s|curl\s|/bin/sh|cmd=|exec\(|union\s+select|sleep\(\d|/shell|/boaform|/GponForm|/HNAP1|/setup\.cgi|/manager/html|/wp-login|/xmlrpc\.php|/\.env|/\.git/|/actuator|/solr/|/jmx|/console/|/_ignition|config set dir|config set dbfilename|slaveof |replicaof |module load|/var/spool/cron|authorized_keys|/\.ssh/)`)
 )
 
 // Options tune classification.
@@ -140,6 +142,9 @@ func RunWith(s *session.Session, evs []honeylog.Event, opt Options) Result {
 			if cmd != "" && cmd != lastCmd {
 				f.Commands = append(f.Commands, cmd)
 				lastCmd = cmd
+				if e.Service == "ssh" || e.Service == "telnet" {
+					f.ShellCommands++
+				}
 			}
 		case "download":
 			if e.URL != "" && !seenURL[e.URL] {
@@ -218,7 +223,7 @@ func RunWith(s *session.Session, evs []honeylog.Event, opt Options) Result {
 }
 
 func classify(s *session.Session, f Facts, opt Options) (string, int) {
-	hasShell := len(f.Commands) > 0
+	hasShell := f.ShellCommands > 0
 	hasTelnet := contains(f.Services, "telnet")
 	hasSSH := contains(f.Services, "ssh")
 	switch {
@@ -231,12 +236,19 @@ func classify(s *session.Session, f Facts, opt Options) (string, int) {
 			return TelnetIoT, 80
 		}
 		return CommandsRun, 80
+	case len(f.Commands) > 0 && !hasShell && anyMatch(opt, f.Commands, f.Payloads):
+		// protocol commands with a known abuse pattern (redis config set
+		// dir, module load, slaveof...): an exploit attempt, not a shell
+		return ServiceExploit, 80
 	case len(f.Forwards) > 0:
 		return PortForward, 70
 	case len(f.LoginSuccess) > 0:
 		return SSHLoginSuccess, 60
 	case len(f.HTTPRequests) > 0:
 		return ServiceProbe, 40 + min(len(f.HTTPRequests), 10)
+	case len(f.Commands) > 0 && !hasShell && len(f.HTTPRequests) == 0:
+		// redis INFO, snmp walks, tftp gets, git probes: a probe with commands
+		return ServiceProbe, 45
 	case f.LoginAttempts >= 3:
 		if hasTelnet && !hasSSH {
 			return TelnetIoT, 35
@@ -265,21 +277,21 @@ func webExploit(f Facts, opt Options) bool {
 	if !contains(f.Services, "http") && !contains(f.Services, "http-alt") {
 		return false
 	}
-	match := func(s string) bool {
-		if reExploit.MatchString(s) {
-			return true
-		}
-		for _, re := range opt.ExploitPatterns {
-			if re.MatchString(s) {
+	return anyMatch(opt, f.Commands, f.HTTPRequests, f.Payloads, f.URLs)
+}
+
+// anyMatch reports whether any string in the lists matches the built-in or
+// configured exploit indicators.
+func anyMatch(opt Options, lists ...[]string) bool {
+	for _, list := range lists {
+		for _, s := range list {
+			if reExploit.MatchString(s) {
 				return true
 			}
-		}
-		return false
-	}
-	for _, list := range [][]string{f.Commands, f.HTTPRequests, f.Payloads, f.URLs} {
-		for _, s := range list {
-			if match(s) {
-				return true
+			for _, re := range opt.ExploitPatterns {
+				if re.MatchString(s) {
+					return true
+				}
 			}
 		}
 	}

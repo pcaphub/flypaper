@@ -27,7 +27,9 @@ func Title(r classify.Result, s *session.Session) string {
 	case classify.WebExploit:
 		t = exploitTitle(f)
 	case classify.CommandsRun:
-		t = fmt.Sprintf("%s session%s: %s", strings.ToUpper(primaryService(f, "ssh")), asUser(f), commandSummary(f.Commands, 3))
+		t = fmt.Sprintf("%s session%s: %s", serviceLabel(primaryService(f, "ssh")), asUser(f), commandSummary(f.Commands, 3))
+	case classify.ServiceExploit:
+		t = fmt.Sprintf("%s exploit attempt: %s", serviceLabel(primaryService(f, "")), commandSummary(f.Commands, 3))
 	case classify.TelnetIoT:
 		if len(f.Commands) > 0 {
 			t = fmt.Sprintf("Telnet IoT bot%s: %s", asUser(f), commandSummary(f.Commands, 3))
@@ -47,13 +49,13 @@ func Title(r classify.Result, s *session.Session) string {
 	case classify.SSHBruteforce:
 		t = sprayTitle("SSH", f)
 	case classify.LoginBruteforce:
-		t = sprayTitle(strings.ToUpper(primaryService(f, "")), f)
+		t = sprayTitle(serviceLabel(primaryService(f, "")), f)
 	case classify.ServiceProbe:
 		t = probeTitle(f)
 	default: // scan-only
 		t = scanTitle(f, s)
 	}
-	t = clean(t)
+	t = titleSafe(clean(t))
 	if len(t) > maxTitle {
 		cut := strings.LastIndexByte(t[:maxTitle-3], ' ')
 		if cut < maxTitle/2 {
@@ -152,7 +154,7 @@ func probeTitle(f classify.Facts) string {
 		}
 		return fmt.Sprintf("HTTP probe%s: %s%s", port, strings.Join(paths, ", "), more)
 	case len(f.Commands) > 0:
-		return fmt.Sprintf("%s probe%s: %s", strings.ToUpper(svc), port, commandSummary(f.Commands, 3))
+		return fmt.Sprintf("%s probe%s: %s", serviceLabel(svc), port, commandSummary(f.Commands, 3))
 	}
 	// handshake only: say which one, with the one readable detail if any
 	switch svc {
@@ -174,8 +176,65 @@ func probeTitle(f classify.Facts) string {
 	case "":
 		return "Service probe" + port
 	}
-	return strings.ToUpper(svc) + " probe" + port
+	return serviceLabel(svc) + " probe" + port
 }
+
+// serviceLabel is the service name as people write it.
+func serviceLabel(svc string) string {
+	switch svc {
+	case "ssh", "ftp", "vnc", "rdp", "http", "smb", "tftp", "snmp", "sip", "tcp", "dns", "sftp", "mssql", "upnp":
+		return strings.ToUpper(svc)
+	case "telnet":
+		return "Telnet"
+	case "redis":
+		return "Redis"
+	case "mysql":
+		return "MySQL"
+	case "mongodb":
+		return "MongoDB"
+	case "postgres":
+		return "PostgreSQL"
+	case "git":
+		return "Git"
+	case "docker":
+		return "Docker API"
+	case "kibana":
+		return "Kibana"
+	case "elasticsearch":
+		return "Elasticsearch"
+	case "memcached":
+		return "Memcached"
+	case "http-proxy":
+		return "HTTP proxy"
+	case "":
+		return "Service"
+	}
+	return svc
+}
+
+// titleSafe keeps a title to printable ASCII: a run of anything else (raw
+// protocol bytes in a Redis command, a NUL in a Telnet login) becomes one
+// "?", and Cowrie's own backslash-x escapes are dropped.
+func titleSafe(s string) string {
+	s = reCowrieEscape.ReplaceAllString(s, "")
+	var b strings.Builder
+	junk := false
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c >= 0x20 && c < 0x7f {
+			b.WriteByte(c)
+			junk = false
+		} else if c == '\t' || c == '\n' || c == '\r' {
+			b.WriteByte(' ')
+		} else if !junk {
+			b.WriteByte('?')
+			junk = true
+		}
+	}
+	return strings.Join(strings.Fields(b.String()), " ")
+}
+
+var reCowrieEscape = regexp.MustCompile(`\\x[0-9a-fA-F]{2}`)
 
 func scanTitle(f classify.Facts, s *session.Session) string {
 	ports := append([]int{}, f.LocalPorts...)
