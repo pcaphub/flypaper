@@ -33,6 +33,7 @@ type File struct {
 	Scenarios map[string]*Scenario `json:"scenarios"` // fingerprint -> record
 	Uploads   map[string]int       `json:"uploads"`   // "2006-01-02" -> count
 	Baseline  map[string]int       `json:"baseline"`  // day -> baseline samples uploaded
+	LowTier   map[string]int       `json:"low_tier"`  // day -> uploads of scans, sprays and probes
 	Sigs      map[string]bool      `json:"sigs"`      // Suricata SIDs ever seen from this collector
 	Sessions  map[string]int       `json:"sessions"`  // day -> sessions seen (for the dedupe ratio)
 	ByClass   map[string]*Counter  `json:"by_class"`  // class -> seen / uploaded, lifetime
@@ -81,6 +82,9 @@ func Open(dir string) (*Store, error) {
 	if s.F.Baseline == nil {
 		s.F.Baseline = map[string]int{}
 	}
+	if s.F.LowTier == nil {
+		s.F.LowTier = map[string]int{}
+	}
 	if s.F.Sigs == nil {
 		s.F.Sigs = map[string]bool{}
 	}
@@ -115,6 +119,7 @@ func (s *Store) Save() error {
 		if d, err := time.Parse("2006-01-02", k); err == nil && d.Before(cut) {
 			delete(s.F.Uploads, k)
 			delete(s.F.Baseline, k)
+			delete(s.F.LowTier, k)
 		}
 	}
 	for k := range s.F.Sessions {
@@ -230,14 +235,24 @@ func (s *Store) BaselineToday(day time.Time) int {
 	return s.F.Baseline[day.UTC().Format("2006-01-02")]
 }
 
+// LowTierToday returns how many low-tier uploads were made that day.
+func (s *Store) LowTierToday(day time.Time) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.F.LowTier[day.UTC().Format("2006-01-02")]
+}
+
 // RecordUpload stores a successful upload of a scenario.
-func (s *Store) RecordUpload(fp, family, captureID string, at time.Time, baseline bool) {
+func (s *Store) RecordUpload(fp, family, captureID string, at time.Time, baseline, lowTier bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	day := at.UTC().Format("2006-01-02")
 	s.F.Uploads[day]++
 	if baseline {
 		s.F.Baseline[day]++
+	}
+	if lowTier {
+		s.F.LowTier[day]++
 	}
 	if family != "" {
 		s.F.Families[family] = append(s.F.Families[family], at.UTC().Format(time.RFC3339))

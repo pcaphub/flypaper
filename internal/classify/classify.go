@@ -215,7 +215,13 @@ func classify(s *session.Session, f Facts, opt Options) (string, int) {
 		return SSHBruteforce, 30 + min(f.LoginAttempts/20, 10)
 	case len(s.LocalPorts) == 1 && s.TotalPkts >= 8 && !hasSSH && !hasTelnet:
 		// one service, real payload exchanged, no honeypot log: a probe of
-		// a service we only capture (redis, mysql, smb...)
+		// a service we only capture (redis, mysql, smb...). With nothing
+		// readable in it (an SMB negotiate, a TDS prelogin) it is a scanner
+		// and scores below min_score: the baseline and new families keep it
+		// represented.
+		if len(f.Payloads) == 0 {
+			return ServiceProbe, 35
+		}
 		return ServiceProbe, 45
 	default:
 		// score scans by breadth: 1 port = noise, 20 ports = a proper sweep
@@ -314,8 +320,10 @@ func (r Result) Templates() []string {
 	for _, c := range r.Facts.Commands {
 		add("cmd:" + Normalise(c))
 	}
-	for _, p := range r.Facts.Payloads {
-		add("payload:" + Normalise(p))
+	if payloadsIdentify(r.Facts) {
+		for _, p := range r.Facts.Payloads {
+			add("payload:" + Normalise(p))
+		}
 	}
 	return out
 }
@@ -401,12 +409,14 @@ func fingerprint(class string, f Facts) string {
 	sort.Strings(reqs)
 	b.WriteString(strings.Join(reqs, ";"))
 	b.WriteString("|")
-	pays := make([]string, 0, len(f.Payloads))
-	for _, p := range f.Payloads {
-		pays = append(pays, Normalise(p))
+	if payloadsIdentify(f) {
+		pays := make([]string, 0, len(f.Payloads))
+		for _, p := range f.Payloads {
+			pays = append(pays, Normalise(p))
+		}
+		sort.Strings(pays)
+		b.WriteString(strings.Join(pays, ";"))
 	}
-	sort.Strings(pays)
-	b.WriteString(strings.Join(pays, ";"))
 	if class == ScanOnly || class == ServiceProbe {
 		// scans are the same scenario when they hit the same port set
 		ports := append([]int{}, f.LocalPorts...)
@@ -415,6 +425,16 @@ func fingerprint(class string, f Facts) string {
 	}
 	sum := sha256.Sum256([]byte(b.String()))
 	return hex.EncodeToString(sum[:8])
+}
+
+// payloadsIdentify reports whether the printable payload samples say
+// something about the attacker's intent. They do when the session carries
+// requests or commands (HTTP paths, Redis or shell commands and their POST
+// bodies). A bare connect to RDP, MSSQL or SMB has only the protocol
+// handshake: a client cookie or prelogin that changes with every tool and
+// run, which would make one probe look like a dozen scenarios.
+func payloadsIdentify(f Facts) bool {
+	return len(f.HTTPRequests) > 0 || len(f.Commands) > 0
 }
 
 // Normalise masks the parts of a command line that change per victim or per

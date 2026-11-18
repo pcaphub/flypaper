@@ -116,3 +116,42 @@ func TestVNCSprayIsLoginBruteforce(t *testing.T) {
 		t.Errorf("facts: %+v", r.Facts)
 	}
 }
+
+// Two RDP connects whose only payload is the client cookie are one scenario;
+// the cookie names a tool or a victim list, not an intent. With nothing
+// readable at all the probe scores below min_score.
+func TestBinaryProbesShareOneFingerprint(t *testing.T) {
+	mk := func(ip, cookie string) *session.Session {
+		s := &session.Session{Remote: net.ParseIP(ip), LinkType: layers.LinkTypeEthernet, LocalPorts: []int{3389}}
+		at := time.Date(2026, 11, 18, 9, 0, 0, 0, time.UTC)
+		for i := 0; i < 10; i++ {
+			var pl []byte
+			if i == 0 && cookie != "" {
+				pl = []byte("Cookie: mstshash=" + cookie + "\r\n")
+			}
+			ci := gopacket.CaptureInfo{Timestamp: at.Add(time.Duration(i) * time.Second), CaptureLength: len(pl) + 54, Length: len(pl) + 54}
+			s.Packets = append(s.Packets, session.Packet{CI: ci, Data: append(make([]byte, 54), pl...), Payload: pl, Remote: s.Remote, Proto: layers.IPProtocolTCP, RemPort: 51000, LocPort: 3389, ToLocal: i%2 == 0})
+		}
+		s.Flows = []session.Flow{{Proto: layers.IPProtocolTCP, RemPort: 51000, LocPort: 3389, Pkts: 10}}
+		s.Start, s.End, s.TotalPkts = at, at.Add(10*time.Second), 10
+		return s
+	}
+	a := Run(mk("198.51.100.1", "hello"), nil)
+	b := Run(mk("198.51.100.2", "Administr"), nil)
+	if a.Class != ServiceProbe || b.Class != ServiceProbe {
+		t.Fatalf("classes %s %s", a.Class, b.Class)
+	}
+	if a.Fingerprint != b.Fingerprint {
+		t.Errorf("cookie changed the fingerprint: %s vs %s", a.Fingerprint, b.Fingerprint)
+	}
+	if a.Score != 45 {
+		t.Errorf("readable cookie should score 45, got %d", a.Score)
+	}
+	if len(a.Templates()) != 0 {
+		t.Errorf("handshake must not be a novelty template: %v", a.Templates())
+	}
+	c := Run(mk("198.51.100.3", ""), nil)
+	if c.Class != ServiceProbe || c.Score != 35 {
+		t.Errorf("binary-only probe: class %s score %d", c.Class, c.Score)
+	}
+}

@@ -35,6 +35,7 @@ select:
   keep_attempts: 20   # brute force: keep the first N connections + the ones that logged in
   min_score: 40       # upload threshold (scan-only is 10-30, brute force 30-40, shell 80+)
   daily_cap: 20       # uploads per day, highest score first within a pass
+  probe_cap: 8        # of those, at most this many scans, sprays and probes
   baseline_per_day: 1 # one below-threshold sample per day so the baseline is represented
   repeat_after: 720h  # the same scenario uploads again after 30 days
   family_cap: 3       # variants of one campaign (same class, services, command verbs or paths): 3 per 30 days

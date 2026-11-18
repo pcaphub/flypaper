@@ -158,8 +158,12 @@ func Build(in Input) Meta {
 	} else {
 		b.WriteString("First sighting of this scenario on this collector.\n")
 	}
-	if in.SessionsSeen > 0 {
+	if in.SessionsSeen >= ratioAfterSessions {
 		fmt.Fprintf(&b, "Collector totals: %d sessions seen, %d uploaded (%.1f%%).\n", in.SessionsSeen, in.Uploaded+1, 100*float64(in.Uploaded+1)/float64(in.SessionsSeen))
+	} else if in.SessionsSeen > 0 {
+		// a fresh collector uploads most of what it sees; the ratio means
+		// nothing until the scenario store has filled
+		fmt.Fprintf(&b, "Collector totals: %d sessions seen, %d uploaded.\n", in.SessionsSeen, in.Uploaded+1)
 	}
 	b.WriteString("\nCollected on a low-interaction honeypot (Cowrie and OpenCanary); the attacker never reached a real system. Credentials shown were supplied by the attacker. Uploaded automatically by flypaper, reviewed before any public release.\n")
 
@@ -258,6 +262,10 @@ func clean(s string) string {
 	}
 	return b.String()
 }
+
+// ratioAfterSessions: show the upload percentage only once this many
+// sessions were seen, same threshold as the pipeline's ratio guard.
+const ratioAfterSessions = 200
 
 func humanClass(c string, services []string) string {
 	switch c {

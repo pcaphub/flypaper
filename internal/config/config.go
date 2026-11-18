@@ -69,13 +69,17 @@ type Logs struct {
 }
 
 type Select struct {
-	IdleGap        time.Duration `yaml:"idle_gap"`
-	MaxPackets     int           `yaml:"max_packets"`
-	MaxBytes       int64         `yaml:"max_bytes"`
-	MinPackets     int           `yaml:"min_packets"`
-	KeepAttempts   int           `yaml:"keep_attempts"` // brute-force connections kept per slice
-	MinScore       int           `yaml:"min_score"`
-	DailyCap       int           `yaml:"daily_cap"`
+	IdleGap      time.Duration `yaml:"idle_gap"`
+	MaxPackets   int           `yaml:"max_packets"`
+	MaxBytes     int64         `yaml:"max_bytes"`
+	MinPackets   int           `yaml:"min_packets"`
+	KeepAttempts int           `yaml:"keep_attempts"` // brute-force connections kept per slice
+	MinScore     int           `yaml:"min_score"`
+	DailyCap     int           `yaml:"daily_cap"`
+	// ProbeCap: of DailyCap, at most this many go to the low tier (scans,
+	// password sprays, service probes) so a busy morning of scanners cannot
+	// use up the day before a shell session or exploit attempt arrives.
+	ProbeCap       int           `yaml:"probe_cap"`
 	BaselinePerDay int           `yaml:"baseline_per_day"`
 	RepeatAfter    time.Duration `yaml:"repeat_after"` // same scenario uploads again after this
 	// FamilyCap: uploads allowed per coarse family (class + services + verbs
@@ -120,6 +124,7 @@ func Default() Config {
 			KeepAttempts:        20,
 			MinScore:            40,
 			DailyCap:            20,
+			ProbeCap:            8,
 			BaselinePerDay:      1,
 			RepeatAfter:         30 * 24 * time.Hour,
 			FamilyCap:           3,

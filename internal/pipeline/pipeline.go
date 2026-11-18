@@ -57,7 +57,7 @@ type Candidate struct {
 	Session     *session.Session
 	Result      classify.Result
 	Meta        describe.Meta
-	Decision    string // upload, baseline, repeat, family-cap, below-threshold, daily-cap, too-small
+	Decision    string // upload, baseline, repeat, family-cap, below-threshold, daily-cap, tier-cap, too-small
 	Novel       []string
 	Baseline    bool
 	CaptureID   string
@@ -292,6 +292,10 @@ func (p *Pipeline) decide(c *Candidate) {
 		threshold += 20
 	}
 	if c.Result.Score >= threshold {
+		if lowTier(c.Result) && p.Cfg.Select.ProbeCap > 0 && p.State.LowTierToday(now) >= p.Cfg.Select.ProbeCap {
+			c.Decision = "tier-cap"
+			return
+		}
 		c.Decision = "upload"
 		return
 	}
@@ -302,6 +306,19 @@ func (p *Pipeline) decide(c *Candidate) {
 		return
 	}
 	c.Decision = "below-threshold"
+}
+
+// lowTier is the boring majority: scans, password sprays and probes, which
+// share ProbeCap of the day's slots. Everything with a login, a shell, an
+// exploit attempt or a download is high tier and only bounded by DailyCap.
+func lowTier(r classify.Result) bool {
+	switch r.Class {
+	case classify.ScanOnly, classify.SSHBruteforce, classify.LoginBruteforce, classify.ServiceProbe:
+		return true
+	case classify.TelnetIoT:
+		return len(r.Facts.Commands) == 0
+	}
+	return false
 }
 
 func noveltyApplies(class string) bool {
@@ -341,7 +358,7 @@ func (p *Pipeline) publish(ctx context.Context, c *Candidate) error {
 		if err := os.WriteFile(filepath.Join(dir, base+".json"), b, 0o640); err != nil {
 			return err
 		}
-		p.State.RecordUpload(c.Result.Fingerprint, c.Result.Family, "dry-run:"+base, p.Now(), c.Baseline)
+		p.State.RecordUpload(c.Result.Fingerprint, c.Result.Family, "dry-run:"+base, p.Now(), c.Baseline, lowTier(c.Result))
 		p.Log.Info("would upload", "class", c.Result.Class, "score", c.Result.Score, "remote", c.Session.Remote, "packets", len(c.Session.Packets), "bytes", size, "file", base+".pcap")
 		return nil
 	}
@@ -353,14 +370,14 @@ func (p *Pipeline) publish(ctx context.Context, c *Candidate) error {
 	if errors.Is(err, pcaphub.ErrDuplicate) {
 		// identical bytes already uploaded (ring overlap, restart): done
 		c.Decision = "duplicate"
-		p.State.RecordUpload(c.Result.Fingerprint, c.Result.Family, "", p.Now(), c.Baseline)
+		p.State.RecordUpload(c.Result.Fingerprint, c.Result.Family, "", p.Now(), c.Baseline, lowTier(c.Result))
 		return nil
 	}
 	if err != nil {
 		return err
 	}
 	c.CaptureID = cap.ID
-	p.State.RecordUpload(c.Result.Fingerprint, c.Result.Family, cap.ID, p.Now(), c.Baseline)
+	p.State.RecordUpload(c.Result.Fingerprint, c.Result.Family, cap.ID, p.Now(), c.Baseline, lowTier(c.Result))
 	p.Log.Info("uploaded", "id", cap.ID, "class", c.Result.Class, "score", c.Result.Score, "remote", c.Session.Remote, "packets", len(c.Session.Packets), "bytes", size)
 	if err := p.State.Save(); err != nil {
 		return err

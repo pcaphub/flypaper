@@ -7,6 +7,7 @@
 //	flypaper check      validate config, logs, ring dir and the PcapHub key
 //	flypaper stats      sessions seen vs uploaded, per class, dedupe ratio
 //	flypaper slice F    slice one pcap to stdout summary (debugging)
+//	flypaper upgrade    install the latest release (or -version vX.Y.Z) and restart the service
 //	flypaper version
 package main
 
@@ -27,6 +28,7 @@ import (
 	"github.com/pcaphub/flypaper/internal/pipeline"
 	"github.com/pcaphub/flypaper/internal/session"
 	"github.com/pcaphub/flypaper/internal/state"
+	"github.com/pcaphub/flypaper/internal/upgrade"
 )
 
 func main() {
@@ -34,8 +36,10 @@ func main() {
 	cfgPath := fs.String("config", "/etc/flypaper/config.yaml", "configuration file")
 	interval := fs.Duration("interval", 2*time.Minute, "run: time between passes")
 	jsonLog := fs.Bool("json", false, "log as JSON")
+	upVersion := fs.String("version", "latest", "upgrade: release tag to install")
+	upService := fs.String("service", "flypaper", "upgrade: systemd unit to restart, empty for none")
 	fs.Usage = func() {
-		fmt.Fprintln(os.Stderr, "usage: flypaper [-config FILE] run|once|dry-run|check|stats|slice FILE|version")
+		fmt.Fprintln(os.Stderr, "usage: flypaper [-config FILE] run|once|dry-run|check|stats|slice FILE|upgrade|version")
 		fs.PrintDefaults()
 	}
 	if len(os.Args) < 2 {
@@ -64,6 +68,16 @@ func main() {
 	switch cmd {
 	case "version":
 		fmt.Println("flypaper", pcaphub.Version)
+		return
+	case "upgrade":
+		tag, err := upgrade.Run(context.Background(), upgrade.Options{
+			Version: *upVersion, Current: pcaphub.Version, Service: *upService,
+			Log: func(f string, a ...any) { log.Info(fmt.Sprintf(f, a...)) },
+		})
+		if err != nil {
+			fatal(log, "upgrade: "+err.Error())
+		}
+		fmt.Println("flypaper", tag)
 		return
 	case "slice":
 		if len(rest) < 1 {

@@ -29,7 +29,7 @@ Deduplication is layered and measurable, because a honeypot sees the same bot th
 
 1. **Scenario fingerprint**, from content and never from the address: class, command sequence with volatile tokens masked (IPs, hashes, random names, ports), credential set, download hosts and normalised paths, HTTP request and payload templates. The first sighting uploads; the same scenario uploads again only after 30 days. Repeats are counted and the representative capture's description is updated with "seen 412 times from 87 addresses since ...".
 2. **Family**: class + services + command verbs (or request path set). Variants of one campaign that differ only in arguments share a family, and a family gets at most 3 uploads per 30 days.
-3. **Daily cap** (20) and one daily **baseline** sample so plain scanning is still represented.
+3. **Daily cap** (20), of which scans, password sprays and probes share at most 8 (**probe cap**) so a morning of scanners cannot use up the day before a shell session arrives, plus one daily **baseline** sample so plain scanning is still represented.
 4. **Ratio guard**: if uploads exceed 5% of sessions over the last 7 days, the collector raises its threshold by 20 points and logs a warning instead of flooding.
 
 `flypaper stats` prints sessions seen vs uploaded, lifetime and per class, and every description carries the collector's totals.
@@ -49,6 +49,7 @@ flypaper dry-run      one pass to the outbox, no upload
 flypaper check        config, paths and PcapHub reachability
 flypaper stats        sessions seen vs uploaded, per class
 flypaper slice F.pcap print the sessions one pcap would produce
+flypaper upgrade      install the latest release (checksum verified) and restart the service
 ```
 
 ## Security notes
