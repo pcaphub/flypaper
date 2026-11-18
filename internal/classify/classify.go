@@ -67,7 +67,7 @@ var (
 	reNum     = regexp.MustCompile(`\b\d{3,}\b`)
 	reSpaces  = regexp.MustCompile(`\s+`)
 	reHTTPReq = regexp.MustCompile(`^(GET|POST|HEAD|PUT|DELETE|OPTIONS|PATCH|PROPFIND|CONNECT|TRACE) (\S{1,400}) HTTP/1\.[01]\r?\n`)
-	reExploit = regexp.MustCompile(`(?i)(\.\./|%2e%2e|/etc/passwd|cgi-bin|\$\{jndi:|<\?php|eval\(|base64_decode|php://input|allow_url_include|auto_prepend_file|system\(|passthru\(|shell_exec\(|assert\(|\bphpinfo\(|/vendor/phpunit|/eval-stdin\.php|/think/app|invokefunction|wget\s|curl\s|/bin/sh|cmd=|exec\(|union\s+select|sleep\(\d|/shell|/boaform|/GponForm|/HNAP1|/setup\.cgi|/manager/html|/wp-login|/xmlrpc\.php|/\.env|/\.git/|/actuator|/solr/|/jmx|/console/|/_ignition|config set dir|config set dbfilename|slaveof |replicaof |module load|/var/spool/cron|authorized_keys|/\.ssh/)`)
+	reExploit = regexp.MustCompile(`(?i)(\.\./|%2e%2e|/etc/passwd|cgi-bin|\$\{jndi:|<\?php|eval\(|base64_decode|php://input|allow_url_include|auto_prepend_file|system\(|passthru\(|shell_exec\(|assert\(|\bphpinfo\(|/vendor/phpunit|/eval-stdin\.php|/think/app|invokefunction|wget\s|curl\s|/bin/sh|cmd=|exec\(|union\s+select|sleep\(\d|/shell|/boaform|/GponForm|/HNAP1|/setup\.cgi|/manager/html|/wp-login|/xmlrpc\.php|/\.env|/\.git/|/actuator|/solr/|/jmx|/console/|/_ignition|config set dir|config set dbfilename|slaveof |replicaof |module load|/var/spool/cron|authorized_keys|/\.ssh/|/SDK/webLanguage|%25[0-9a-f]{2}|/\.well-known/pki-validation/)`)
 )
 
 // Options tune classification.
@@ -332,9 +332,7 @@ func family(class string, f Facts) string {
 	b.WriteString("|")
 	b.WriteString(strings.Join(sortedKeys(paths), ","))
 	if class == ScanOnly || class == ServiceProbe {
-		ports := append([]int{}, f.LocalPorts...)
-		sort.Ints(ports)
-		b.WriteString(fmt.Sprint(ports))
+		b.WriteString(fmt.Sprint(scenarioPorts(f)))
 	}
 	sum := sha256.Sum256([]byte(b.String()))
 	return hex.EncodeToString(sum[:6])
@@ -463,12 +461,29 @@ func fingerprint(class string, f Facts) string {
 	}
 	if class == ScanOnly || class == ServiceProbe {
 		// scans are the same scenario when they hit the same port set
-		ports := append([]int{}, f.LocalPorts...)
-		sort.Ints(ports)
-		b.WriteString(fmt.Sprint(ports))
+		b.WriteString(fmt.Sprint(scenarioPorts(f)))
 	}
 	sum := sha256.Sum256([]byte(b.String()))
 	return hex.EncodeToString(sum[:8])
+}
+
+// scenarioPorts is the port set as the fingerprint sees it: every HTTP port
+// folds into one bucket (0), because the same web probe arrives on 80, 81,
+// 8080 and the other redirected ports and is one scenario, not twelve.
+func scenarioPorts(f Facts) []int {
+	seen := map[int]bool{}
+	var out []int
+	for _, p := range f.LocalPorts {
+		if httpPort(p) {
+			p = 0
+		}
+		if !seen[p] {
+			seen[p] = true
+			out = append(out, p)
+		}
+	}
+	sort.Ints(out)
+	return out
 }
 
 // payloadsIdentify reports whether the printable payload samples say

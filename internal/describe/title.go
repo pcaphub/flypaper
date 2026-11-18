@@ -75,6 +75,9 @@ var knownExploits = []struct {
 	name string
 }{
 	{regexp.MustCompile(`(?i)\$\{jndi:`), "Log4Shell JNDI injection (CVE-2021-44228)"},
+	{regexp.MustCompile(`(?i)/SDK/webLanguage`), "Hikvision camera command injection (CVE-2021-36260)"},
+	{regexp.MustCompile(`(?i)%2577eb%2575i|webui_wsma`), "Cisco IOS XE web UI authentication bypass (CVE-2023-20198)"},
+	{regexp.MustCompile(`(?i)/\.well-known/pki-validation/`), "Webshell upload via pki-validation path"},
 	{regexp.MustCompile(`(?i)/vendor/phpunit|/eval-stdin\.php`), "PHPUnit eval-stdin RCE (CVE-2017-9841)"},
 	{regexp.MustCompile(`(?i)/think/app|invokefunction`), "ThinkPHP invokefunction RCE"},
 	{regexp.MustCompile(`(?i)allow_url_include|auto_prepend_file|php://input`), "PHP-CGI argument injection to shell (CVE-2012-1823 / CVE-2024-4577)"},
@@ -146,6 +149,8 @@ func probeTitle(f classify.Facts) string {
 		port = fmt.Sprintf(" on :%d", f.LocalPorts[0])
 	}
 	switch {
+	case len(f.HTTPRequests) > 0 && isProxyRequest(f.HTTPRequests[0]):
+		return fmt.Sprintf("Open proxy probe%s: %s", port, requestPaths(f.HTTPRequests, 1)[0])
 	case len(f.HTTPRequests) > 0:
 		paths := requestPaths(f.HTTPRequests, 3)
 		more := ""
@@ -331,6 +336,13 @@ func httpPortOf(f classify.Facts) string {
 		return fmt.Sprintf(" on :%d", f.LocalPorts[0])
 	}
 	return ""
+}
+
+// isProxyRequest: an absolute URL as the request target is a client asking
+// us to fetch it, i.e. a check for an open proxy.
+func isProxyRequest(req string) bool {
+	fs := strings.Fields(req)
+	return len(fs) >= 2 && (strings.HasPrefix(fs[1], "http://") || strings.HasPrefix(fs[1], "https://"))
 }
 
 func requestPaths(reqs []string, n int) []string {

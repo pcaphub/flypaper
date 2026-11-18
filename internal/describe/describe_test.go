@@ -92,3 +92,24 @@ func TestServiceExploitTitle(t *testing.T) {
 		t.Errorf("got %q", got)
 	}
 }
+
+func TestDayOneTitles(t *testing.T) {
+	cases := []struct {
+		reqs []string
+		want string
+	}{
+		{[]string{"GET /SDK/webLanguage"}, "Web exploit attempt: Hikvision camera command injection (CVE-2021-36260)"},
+		{[]string{"GET /%2577eb%2575i_%2577sma_Http"}, "Web exploit attempt: Cisco IOS XE web UI authentication bypass (CVE-2023-20198)"},
+		{[]string{"POST /.well-known/pki-validation/update"}, "Web exploit attempt: Webshell upload via pki-validation path"},
+	}
+	for _, c := range cases {
+		r := classify.Result{Class: classify.WebExploit, Facts: classify.Facts{Services: []string{"http"}, LocalPorts: []int{80}, HTTPRequests: c.reqs}}
+		if got := Title(r, sess(1, 80)); got != c.want {
+			t.Errorf("%v: got %q", c.reqs, got)
+		}
+	}
+	r := classify.Result{Class: classify.ServiceProbe, Facts: classify.Facts{Services: []string{"http"}, LocalPorts: []int{8080}, HTTPRequests: []string{"GET http://azenv.net/"}}}
+	if got := Title(r, sess(1, 8080)); got != "Open proxy probe on :8080: http://azenv.net/" {
+		t.Errorf("proxy: %q", got)
+	}
+}

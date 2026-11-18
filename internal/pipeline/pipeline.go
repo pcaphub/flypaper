@@ -415,10 +415,36 @@ func (p *Pipeline) publish(ctx context.Context, c *Candidate) error {
 	}
 	fresh := p.State.NewSignatures(c.Result.Fingerprint, sids)
 	desc := c.Meta.Description + alertSection(alerts, fresh)
-	if err := p.Client.Patch(ctx, cap.ID, &desc, nil); err != nil {
+	// PcapHub's Suricata pass knows exploits the classifier does not: when an
+	// ET EXPLOIT rule fires on a capture classed as a probe, tag it so it is
+	// found with the exploit attempts.
+	var tags []string
+	if suricataSaysExploit(alerts) && !hasTag(c.Meta.Tags, "exploit") {
+		tags = append(append([]string{}, c.Meta.Tags...), "exploit")
+	}
+	if err := p.Client.Patch(ctx, cap.ID, &desc, tags); err != nil {
 		p.Log.Warn("patch description", "id", cap.ID, "error", err)
 	}
 	return nil
+}
+
+func suricataSaysExploit(alerts []pcaphub.Alert) bool {
+	for _, a := range alerts {
+		if strings.HasPrefix(a.Signature, "ET EXPLOIT") || strings.HasPrefix(a.Signature, "ET WEB_SPECIFIC_APPS") ||
+			a.Category == "Attempted Administrator Privilege Gain" || a.Category == "Web Application Attack" {
+			return true
+		}
+	}
+	return false
+}
+
+func hasTag(list []string, s string) bool {
+	for _, x := range list {
+		if x == s {
+			return true
+		}
+	}
+	return false
 }
 
 func alertSection(alerts []pcaphub.Alert, fresh []string) string {

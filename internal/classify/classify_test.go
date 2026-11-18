@@ -248,3 +248,27 @@ func TestProtocolCommandsAreNotAShell(t *testing.T) {
 		t.Errorf("ssh shell: %s", r.Class)
 	}
 }
+
+// The same web probe on 80, 81 and 8080 (the redirected ports) is one
+// scenario and one family; the camera path is an exploit attempt.
+func TestHTTPPortsFoldIntoOneScenario(t *testing.T) {
+	mk := func(port int) *session.Session {
+		s := httpSession(t, "GET /SDK/webLanguage")
+		s.LocalPorts = []int{port}
+		for i := range s.Packets {
+			s.Packets[i].LocPort = port
+		}
+		return s
+	}
+	a, b := Run(mk(80), nil), Run(mk(8081), nil)
+	if a.Class != WebExploit {
+		t.Errorf("class %s", a.Class)
+	}
+	if a.Fingerprint != b.Fingerprint || a.Family != b.Family {
+		t.Errorf("port changed the scenario: %s/%s vs %s/%s", a.Fingerprint, a.Family, b.Fingerprint, b.Family)
+	}
+	c := Run(httpSession(t, "GET /%2577eb%2575i_%2577sma_Http"), nil)
+	if c.Class != WebExploit {
+		t.Errorf("double-encoded path: %s", c.Class)
+	}
+}
