@@ -142,3 +142,14 @@ func TestNoveltyBonusOnlyOnce(t *testing.T) {
 		t.Errorf("second sighting: novel=%v score=%d base=%d", cb.Novel, cb.Result.Score, base)
 	}
 }
+
+func TestNoNoveltyBonusForSprays(t *testing.T) {
+	r := classify.Result{Class: classify.LoginBruteforce, Score: 30}
+	r.Facts.Payloads = []string{"RFB 003.008"}
+	if noveltyApplies(r.Class) || noveltyApplies(classify.ScanOnly) || noveltyApplies(classify.SSHBruteforce) {
+		t.Error("novelty bonus must not apply to scans and password sprays")
+	}
+	if !noveltyApplies(classify.ServiceProbe) || !noveltyApplies(classify.WebExploit) || !noveltyApplies(classify.CommandsRun) {
+		t.Error("novelty bonus must apply to probes, exploits and shells")
+	}
+}

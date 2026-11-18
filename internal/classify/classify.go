@@ -21,6 +21,7 @@ import (
 const (
 	ScanOnly        = "scan-only"
 	SSHBruteforce   = "ssh-bruteforce"
+	LoginBruteforce = "login-bruteforce" // password spray against vnc, mssql, mysql, ftp, rdp...
 	TelnetIoT       = "telnet-iot"
 	SSHLoginSuccess = "ssh-login-success"
 	CommandsRun     = "commands-executed"
@@ -173,6 +174,7 @@ func RunWith(s *session.Session, evs []honeylog.Event, opt Options) Result {
 		}
 	}
 	sort.Strings(f.Services)
+	delete(credCount, ":") // VNC and NTLM logins carry no username or password
 	f.TopCreds = topN(credCount, 5)
 
 	r := Result{Facts: f}
@@ -206,6 +208,9 @@ func classify(s *session.Session, f Facts, opt Options) (string, int) {
 	case f.LoginAttempts >= 3:
 		if hasTelnet && !hasSSH {
 			return TelnetIoT, 35
+		}
+		if !hasSSH {
+			return LoginBruteforce, 30 + min(f.LoginAttempts/20, 10)
 		}
 		return SSHBruteforce, 30 + min(f.LoginAttempts/20, 10)
 	case len(s.LocalPorts) == 1 && s.TotalPkts >= 8 && !hasSSH && !hasTelnet:

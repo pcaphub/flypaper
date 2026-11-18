@@ -8,6 +8,7 @@ import (
 	"github.com/gopacket/gopacket"
 	"github.com/gopacket/gopacket/layers"
 
+	"github.com/pcaphub/flypaper/internal/honeylog"
 	"github.com/pcaphub/flypaper/internal/session"
 )
 
@@ -87,4 +88,31 @@ func has(list []string, s string) bool {
 		}
 	}
 	return false
+}
+
+// A VNC password spray seen by OpenCanary: logins without a username, the
+// only payload is the RFB handshake. Not SSH, and the empty credential must
+// not be reported as the most tried one.
+func TestVNCSprayIsLoginBruteforce(t *testing.T) {
+	s := &session.Session{Remote: net.ParseIP("198.51.100.9"), LinkType: layers.LinkTypeEthernet, LocalPorts: []int{5900}}
+	at := time.Date(2026, 11, 18, 8, 32, 0, 0, time.UTC)
+	var evs []honeylog.Event
+	for i := 0; i < 8; i++ {
+		payload := []byte("RFB 003.008\n")
+		ci := gopacket.CaptureInfo{Timestamp: at.Add(time.Duration(i) * time.Second), CaptureLength: len(payload), Length: len(payload)}
+		s.Packets = append(s.Packets, session.Packet{CI: ci, Data: payload, Payload: payload, Remote: s.Remote, Proto: layers.IPProtocolTCP, RemPort: 50000 + i, LocPort: 5900, ToLocal: true})
+		s.Flows = append(s.Flows, session.Flow{Proto: layers.IPProtocolTCP, RemPort: 50000 + i, LocPort: 5900, Pkts: 1})
+		evs = append(evs, honeylog.Event{Time: ci.Timestamp, Source: "opencanary", Service: "vnc", Kind: "login_failed", SrcIP: s.Remote, SrcPort: 50000 + i, DstPort: 5900})
+	}
+	s.Start, s.End, s.TotalPkts = at, at.Add(8*time.Second), len(s.Packets)
+	r := Run(s, evs)
+	if r.Class != LoginBruteforce {
+		t.Fatalf("class = %s", r.Class)
+	}
+	if len(r.Facts.TopCreds) != 0 {
+		t.Errorf("empty credential reported: %v", r.Facts.TopCreds)
+	}
+	if r.Facts.LoginAttempts != 8 || !has(r.Facts.Services, "vnc") {
+		t.Errorf("facts: %+v", r.Facts)
+	}
 }

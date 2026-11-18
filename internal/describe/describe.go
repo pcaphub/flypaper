@@ -44,7 +44,7 @@ func Build(in Input) Meta {
 	s, r, f := in.Session, in.Result, in.Result.Facts
 	day := s.Start.UTC().Format("2006-01-02")
 
-	title := fmt.Sprintf("%s: %s from %s (%s)", in.Collector, humanClass(r.Class), Defang(s.Remote.String()), day)
+	title := fmt.Sprintf("%s: %s from %s (%s)", in.Collector, humanClass(r.Class, r.Facts.Services), Defang(s.Remote.String()), day)
 	if len(title) > 200 {
 		title = title[:200]
 	}
@@ -259,12 +259,20 @@ func clean(s string) string {
 	return b.String()
 }
 
-func humanClass(c string) string {
+func humanClass(c string, services []string) string {
 	switch c {
 	case classify.ScanOnly:
 		return "port scan"
 	case classify.SSHBruteforce:
 		return "SSH brute force"
+	case classify.LoginBruteforce:
+		// name the service the passwords were tried against
+		for _, s := range services {
+			if s != "tcp" && s != "http" {
+				return strings.ToUpper(s) + " password spray"
+			}
+		}
+		return "password spray"
 	case classify.TelnetIoT:
 		return "Telnet IoT bot"
 	case classify.SSHLoginSuccess:

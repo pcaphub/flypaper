@@ -34,9 +34,9 @@ Deduplication is layered and measurable, because a honeypot sees the same bot th
 
 `flypaper stats` prints sessions seen vs uploaded, lifetime and per class, and every description carries the collector's totals.
 
-New techniques are caught without anyone writing a rule first: HTTP request lines and POST bodies are read straight from the packets (so a PHP-to-shell probe is seen whether or not the honeypot understands it), a request path, command or payload template never seen on this collector adds a **novelty bonus** to the score, `select.exploit_patterns` in the config takes extra regular expressions without a rebuild, and PcapHub's Suricata pass marks signatures the collector has never produced before.
+New techniques are caught without anyone writing a rule first: HTTP request lines and POST bodies are read straight from the packets (so a PHP-to-shell probe is seen whether or not the honeypot understands it), a request path, command or payload template never seen on this collector adds a **novelty bonus** to the score (not for scans and password sprays, whose only payload is the protocol handshake), `select.exploit_patterns` in the config takes extra regular expressions without a rebuild, and PcapHub's Suricata pass marks signatures the collector has never produced before.
 
-Classes, lowest to highest score: `scan-only`, `ssh-bruteforce`, `telnet-iot`, `service-probe`, `ssh-login-success`, `ssh-port-forward`, `commands-executed`, `web-exploit-attempt`, `malware-download`.
+Classes, lowest to highest score: `scan-only`, `ssh-bruteforce`, `login-bruteforce` (VNC, MSSQL, MySQL, FTP, RDP password sprays), `telnet-iot`, `service-probe`, `ssh-login-success`, `ssh-port-forward`, `commands-executed`, `web-exploit-attempt`, `malware-download`.
 
 Descriptions are templated from the facts (attacker-supplied credentials, commands, defanged URLs, SHA-256 of downloads) and, once PcapHub has processed the capture, extended with the Suricata signatures that fired.
 

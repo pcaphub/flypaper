@@ -222,7 +222,7 @@ func (p *Pipeline) trimBruteforce(s *session.Session, evs []honeylog.Event, res 
 		return
 	}
 	switch res.Class {
-	case classify.SSHBruteforce, classify.TelnetIoT, classify.SSHLoginSuccess, classify.CommandsRun, classify.MalwareDownload, classify.PortForward:
+	case classify.SSHBruteforce, classify.LoginBruteforce, classify.TelnetIoT, classify.SSHLoginSuccess, classify.CommandsRun, classify.MalwareDownload, classify.PortForward:
 	default:
 		return
 	}
@@ -253,9 +253,15 @@ func (p *Pipeline) decide(c *Candidate) {
 	s := c.Session
 	sc := p.State.Observe(c.Result.Fingerprint, c.Result.Class, s.Remote.String(), s.Start)
 	c.Novel = p.State.NoteTemplates(c.Result.Templates(), s.Start)
-	c.Result.Novel = c.Novel
-	if len(c.Novel) > 0 && p.Cfg.Select.NoveltyBonus > 0 {
-		c.Result.Score = min(100, c.Result.Score+p.Cfg.Select.NoveltyBonus)
+	// The bonus rewards a request, command or payload nobody has sent this
+	// collector before. A scan or a password spray has none of those worth
+	// rewarding: its "payload" is the protocol handshake (RFB 003.008, a TDS
+	// prelogin), new to a fresh collector once and never interesting.
+	if len(c.Novel) > 0 && noveltyApplies(c.Result.Class) {
+		c.Result.Novel = c.Novel
+		if p.Cfg.Select.NoveltyBonus > 0 {
+			c.Result.Score = min(100, c.Result.Score+p.Cfg.Select.NoveltyBonus)
+		}
 	}
 
 	stats := p.State.Snapshot(now)
@@ -296,6 +302,14 @@ func (p *Pipeline) decide(c *Candidate) {
 		return
 	}
 	c.Decision = "below-threshold"
+}
+
+func noveltyApplies(class string) bool {
+	switch class {
+	case classify.ScanOnly, classify.SSHBruteforce, classify.LoginBruteforce:
+		return false
+	}
+	return true
 }
 
 // publish writes the slice and either uploads it or drops it in the outbox.
