@@ -49,6 +49,9 @@ flypaper dry-run      one pass to the outbox, no upload
 flypaper check        config, paths and PcapHub reachability
 flypaper stats        sessions seen vs uploaded, per class
 flypaper slice F.pcap print the sessions one pcap would produce
+flypaper config       show the selection settings
+flypaper config daily_cap=40 probe_cap=12
+                      change settings in the config file (comments kept, result validated) and restart
 flypaper upgrade      install the latest release (checksum verified) and restart the service
 ```
 

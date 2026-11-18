@@ -7,6 +7,8 @@
 //	flypaper check      validate config, logs, ring dir and the PcapHub key
 //	flypaper stats      sessions seen vs uploaded, per class, dedupe ratio
 //	flypaper slice F    slice one pcap to stdout summary (debugging)
+//	flypaper config     show the selection settings
+//	flypaper config daily_cap=40 probe_cap=12   change settings in place and restart the service
 //	flypaper upgrade    install the latest release (or -version vX.Y.Z) and restart the service
 //	flypaper version
 package main
@@ -17,8 +19,10 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"os/exec"
 	"os/signal"
 	"sort"
+	"strings"
 	"syscall"
 	"time"
 
@@ -37,9 +41,9 @@ func main() {
 	interval := fs.Duration("interval", 2*time.Minute, "run: time between passes")
 	jsonLog := fs.Bool("json", false, "log as JSON")
 	upVersion := fs.String("version", "latest", "upgrade: release tag to install")
-	upService := fs.String("service", "flypaper", "upgrade: systemd unit to restart, empty for none")
+	upService := fs.String("service", "flypaper", "upgrade, config: systemd unit to restart, empty for none")
 	fs.Usage = func() {
-		fmt.Fprintln(os.Stderr, "usage: flypaper [-config FILE] run|once|dry-run|check|stats|slice FILE|upgrade|version")
+		fmt.Fprintln(os.Stderr, "usage: flypaper [-config FILE] run|once|dry-run|check|stats|slice FILE|config [key=value ...]|upgrade|version")
 		fs.PrintDefaults()
 	}
 	if len(os.Args) < 2 {
@@ -68,6 +72,29 @@ func main() {
 	switch cmd {
 	case "version":
 		fmt.Println("flypaper", pcaphub.Version)
+		return
+	case "config":
+		if len(rest) == 0 {
+			cfg, err := config.Load(*cfgPath)
+			if err != nil {
+				fatal(log, err.Error())
+			}
+			showConfig(cfg)
+			return
+		}
+		changed, err := config.Set(*cfgPath, rest)
+		if err != nil {
+			fatal(log, "config: "+err.Error())
+		}
+		for _, c := range changed {
+			fmt.Println("set", c)
+		}
+		if *upService != "" {
+			if out, err := exec.Command("systemctl", "restart", *upService).CombinedOutput(); err != nil {
+				fatal(log, fmt.Sprintf("restart %s: %v: %s", *upService, err, strings.TrimSpace(string(out))))
+			}
+			fmt.Println("restarted", *upService)
+		}
 		return
 	case "upgrade":
 		tag, err := upgrade.Run(context.Background(), upgrade.Options{
@@ -250,4 +277,23 @@ func printStats(st state.Stats) {
 func fatal(log *slog.Logger, msg string) {
 	log.Error(msg)
 	os.Exit(1)
+}
+
+// showConfig prints the values flypaper config can change.
+func showConfig(cfg config.Config) {
+	sel := cfg.Select
+	rows := [][2]string{
+		{"name", cfg.Name}, {"region", cfg.Region}, {"dry_run", fmt.Sprint(cfg.DryRun)},
+		{"daily_cap", fmt.Sprint(sel.DailyCap)}, {"probe_cap", fmt.Sprint(sel.ProbeCap)},
+		{"baseline_per_day", fmt.Sprint(sel.BaselinePerDay)}, {"min_score", fmt.Sprint(sel.MinScore)},
+		{"family_cap", fmt.Sprint(sel.FamilyCap)}, {"repeat_after", sel.RepeatAfter.String()},
+		{"novelty_bonus", fmt.Sprint(sel.NoveltyBonus)}, {"max_ratio", fmt.Sprint(sel.MaxRatio)},
+		{"min_sessions_for_ratio", fmt.Sprint(sel.MinSessionsForRatio)},
+		{"keep_attempts", fmt.Sprint(sel.KeepAttempts)}, {"max_packets", fmt.Sprint(sel.MaxPackets)},
+		{"max_bytes", fmt.Sprint(sel.MaxBytes)}, {"idle_gap", sel.IdleGap.String()},
+	}
+	for _, r := range rows {
+		fmt.Printf("%-24s %s\n", r[0], r[1])
+	}
+	fmt.Println("\nchange with: flypaper config daily_cap=40 probe_cap=12   (restarts the service)")
 }
