@@ -53,9 +53,9 @@ func TestOutboundFlowsDroppedAndLocalDetected(t *testing.T) {
 	dns := net.ParseIP("1.1.1.1")
 	t0 := time.Date(2026, 11, 17, 9, 0, 0, 0, time.UTC)
 	r := writePcap(t, func(w *pcapgo.Writer) {
-		tcpFlow(t, w, t0, att, 40000, hp, 22, 8)              // attacker -> honeypot
+		tcpFlow(t, w, t0, att, 40000, hp, 22, 8)                      // attacker -> honeypot
 		tcpFlow(t, w, t0.Add(time.Second), hp, 50000, archive, 80, 8) // honeypot -> apt mirror
-		tcpFlow(t, w, t0.Add(2*time.Second), hp, 50001, dns, 53, 4)    // honeypot -> dns (tcp for simplicity)
+		tcpFlow(t, w, t0.Add(2*time.Second), hp, 50001, dns, 53, 4)   // honeypot -> dns (tcp for simplicity)
 	})
 	opt := Options{ExcludePorts: map[int]bool{}, IdleGap: 5 * time.Minute, MaxPackets: 2000, MaxBytes: 1 << 20, MinPackets: 1}
 	sessions, err := SliceReader(r, opt)

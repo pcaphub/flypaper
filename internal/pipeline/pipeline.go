@@ -196,9 +196,9 @@ func (p *Pipeline) sliceOptions() session.Options {
 		UseInterfaceAddrs: len(p.Cfg.Capture.LocalIPs) == 0,
 		KeepOutbound:      p.Cfg.Capture.KeepOutbound,
 		IdleGap:           p.Cfg.Select.IdleGap,
-		MaxPackets:   p.Cfg.Select.MaxPackets,
-		MaxBytes:     p.Cfg.Select.MaxBytes,
-		MinPackets:   1, // the pipeline applies MinPackets after trimming
+		MaxPackets:        p.Cfg.Select.MaxPackets,
+		MaxBytes:          p.Cfg.Select.MaxBytes,
+		MinPackets:        1, // the pipeline applies MinPackets after trimming
 	}
 	for _, ip := range p.Cfg.Capture.LocalIPs {
 		opt.LocalIPs = append(opt.LocalIPs, net.ParseIP(ip))

@@ -102,7 +102,19 @@ func ReadOpenCanary(r io.Reader) ([]Event, error) {
 			ev.Service, ev.Kind = "mysql", "connect"
 		case ocMySQLLogin:
 			ev.Service, ev.Kind = "mysql", "login_failed"
-		case ocMSSQLLogin, ocMSSQLWinAuth:
+		case ocMSSQLLogin:
+			// TDS login: OpenCanary logs the client's self-description in
+			// CamelCase keys (UserName, AppName, HostName, CltIntName), unlike
+			// every other service. The client description is worth keeping:
+			// "Nmap NSE / mssql.lua" and "Microl office / ODBC" are different
+			// actors behind the same "sa" login.
+			ev.Service, ev.Kind = "mssql", "login_failed"
+			ev.Username = str(data, "UserName")
+			if client := strings.TrimSpace(strings.Join(nonEmpty(str(data, "AppName"), str(data, "CltIntName"), str(data, "HostName")), " / ")); client != "" {
+				out = append(out, Event{Time: ev.Time, Source: ev.Source, Service: "mssql", Kind: "client",
+					SrcIP: ev.SrcIP, SrcPort: ev.SrcPort, DstPort: ev.DstPort, Input: client})
+			}
+		case ocMSSQLWinAuth:
 			ev.Service, ev.Kind = "mssql", "login_failed"
 		case ocMongoLogin:
 			ev.Service, ev.Kind = "mongodb", "login_failed"
@@ -156,6 +168,16 @@ func str(m map[string]any, k string) string {
 	default:
 		return fmt.Sprint(v)
 	}
+}
+
+func nonEmpty(parts ...string) []string {
+	var out []string
+	for _, p := range parts {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // ReadOpenCanaryFiles reads the live log and rotated siblings.
