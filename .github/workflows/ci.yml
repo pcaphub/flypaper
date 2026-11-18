@@ -22,7 +22,7 @@ jobs:
       - run: go test ./...
       - run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
       - name: Installer syntax
-        run: bash -n install/install.sh && bash -n install/http-ports.sh
+        run: bash -n install/install.sh && bash -n install/http-ports.sh && bash -n install/web-honeypot.sh
   release:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: test
@@ -43,7 +43,23 @@ jobs:
               -ldflags "-s -w -X github.com/pcaphub/flypaper/internal/pcaphub.Version=${GITHUB_REF_NAME}" \
               -o dist/flypaper_linux_${arch} ./cmd/flypaper
           done
-          (cd dist && sha256sum flypaper_linux_* > SHA256SUMS)
+      - name: Build Beelzebub (third party, GPL-3) from the pinned upstream tag
+        env:
+          BEELZEBUB_TAG: v3.10.0
+          BEELZEBUB_COMMIT: a02d0354e19a01e97eeccaf1874419dcb05b94ca
+        run: |
+          set -eu
+          git clone -q --depth 1 --branch "$BEELZEBUB_TAG" https://github.com/beelzebub-labs/beelzebub.git /tmp/beelzebub
+          cd /tmp/beelzebub
+          [ "$(git rev-parse HEAD)" = "$BEELZEBUB_COMMIT" ] || { echo "upstream tag $BEELZEBUB_TAG moved"; exit 1; }
+          for arch in amd64 arm64; do
+            CGO_ENABLED=0 GOOS=linux GOARCH=$arch go build -trimpath \
+              -ldflags "-s -w -X github.com/beelzebub-labs/beelzebub/v3/cli.Version=${BEELZEBUB_TAG} -X github.com/beelzebub-labs/beelzebub/v3/cli.CommitSHA=${BEELZEBUB_COMMIT:0:8}" \
+              -o "$GITHUB_WORKSPACE/dist/beelzebub_linux_${arch}" .
+          done
+          cp "$GITHUB_WORKSPACE/THIRD_PARTY.md" "$GITHUB_WORKSPACE/dist/"
+      - name: Checksums
+        run: (cd dist && sha256sum flypaper_linux_* beelzebub_linux_* > SHA256SUMS)
       - uses: softprops/action-gh-release@v2
         with:
           files: dist/*

@@ -212,6 +212,13 @@ func check(ctx context.Context, log *slog.Logger, cfg config.Config) int {
 		_, err = os.Stat(cfg.Logs.OpenCanary)
 		ok("opencanary log "+cfg.Logs.OpenCanary, err)
 	}
+	if cfg.Logs.Beelzebub != "" {
+		if _, err = os.Stat(cfg.Logs.Beelzebub); err == nil {
+			ok("beelzebub log "+cfg.Logs.Beelzebub, nil)
+		} else {
+			fmt.Printf("skip  beelzebub log %s (no web honeypot installed)\n", cfg.Logs.Beelzebub)
+		}
+	}
 	st, err := state.Open(cfg.StateDir)
 	ok("state directory "+cfg.StateDir, err)
 	if err == nil {

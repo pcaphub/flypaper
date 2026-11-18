@@ -17,7 +17,10 @@
 #   COWRIE_VERSION         default 3.1.6
 #   OPENCANARY_VERSION     default 0.9.10
 #   OPENCANARY_SERVICES    default "http ftp mysql redis rdp vnc mssql tftp httpproxy smbbanner"
-#   HTTP_EXTRA_PORTS       more ports answered by the web honeypot (nftables redirect), default "81 8000 8081 8088 8443 8888 9000 7547 2375 9200 5601"
+#   WEB_HONEYPOT           beelzebub (default: Beelzebub's WordPress emulation on :80, complete request bodies logged)
+#                          or opencanary (OpenCanary's login page on :80 and squid proxy on :8080)
+#   BEELZEBUB_VERSION      default v3.10.0 (upstream tag; the binary comes from flypaper's release page)
+#   HTTP_EXTRA_PORTS       more ports answered by the web honeypot (nftables redirect), default "81 8000 8081 8088 8443 8888 9000 7547 2375 9200 5601" (+8080 with beelzebub)
 #   CAPTURE_IFACE          default: the default-route interface
 #
 # What it does, in order: packages; move sshd to MGMT_SSH_PORT (key auth only
@@ -36,11 +39,18 @@ set -euo pipefail
 : "${MGMT_SSH_PORT:=22222}"
 : "${COWRIE_VERSION:=3.1.6}"
 : "${OPENCANARY_VERSION:=0.9.10}"
-: "${OPENCANARY_SERVICES:=http ftp mysql redis rdp vnc mssql tftp httpproxy smbbanner}"
+: "${WEB_HONEYPOT:=beelzebub}"
+: "${BEELZEBUB_VERSION:=v3.10.0}"
+if [ "$WEB_HONEYPOT" = beelzebub ]; then
+  : "${OPENCANARY_SERVICES:=ftp mysql redis rdp vnc mssql tftp smbbanner}"
+else
+  : "${OPENCANARY_SERVICES:=http ftp mysql redis rdp vnc mssql tftp httpproxy smbbanner}"
+fi
 # Extra ports answered by the OpenCanary web honeypot via an nftables redirect
 # (install/http-ports.sh). Empty to skip.
 : "${HTTP_EXTRA_PORTS:=81 8000 8081 8088 8443 8888 9000 7547 2375 9200 5601}"
 : "${HTTP_PORTS_SCRIPT:=https://raw.githubusercontent.com/pcaphub/flypaper/main/install/http-ports.sh}"
+: "${WEB_HONEYPOT_SCRIPT:=https://raw.githubusercontent.com/pcaphub/flypaper/main/install/web-honeypot.sh}"
 : "${CAPTURE_IFACE:=}"
 REPO="pcaphub/flypaper"
 
@@ -127,14 +137,16 @@ done
 ufw --force enable >/dev/null
 ufw status | sed 's/^/    /'
 
-if [ -n "$HTTP_EXTRA_PORTS" ] && echo "$OPENCANARY_SERVICES" | grep -qw http; then
-  log "Redirecting extra HTTP ports to the web honeypot"
+if [ -n "$HTTP_EXTRA_PORTS" ]; then
   if [ -f "$HTTP_PORTS_SCRIPT" ]; then
     cp "$HTTP_PORTS_SCRIPT" /root/http-ports.sh
   else
     curl -fsSL "$HTTP_PORTS_SCRIPT" -o /root/http-ports.sh
   fi
-  HTTP_EXTRA_PORTS="$HTTP_EXTRA_PORTS" HTTP_TARGET_PORT=80 MGMT_SSH_PORT="$MGMT_SSH_PORT" bash /root/http-ports.sh | sed 's/^/    /'
+  if [ "$WEB_HONEYPOT" != beelzebub ] && echo "$OPENCANARY_SERVICES" | grep -qw http; then
+    log "Redirecting extra HTTP ports to the web honeypot"
+    HTTP_EXTRA_PORTS="$HTTP_EXTRA_PORTS" HTTP_TARGET_PORT=80 MGMT_SSH_PORT="$MGMT_SSH_PORT" bash /root/http-ports.sh | sed 's/^/    /'
+  fi
 fi
 
 # ---------------------------------------------------------------- users, dirs
@@ -407,6 +419,7 @@ capture:
 logs:
   cowrie: /var/log/cowrie/cowrie.json
   opencanary: /var/log/opencanary/opencanary.log
+  beelzebub: /var/log/beelzebub/beelzebub.log
 
 select:
   idle_gap: 5m
@@ -469,13 +482,27 @@ systemctl enable --now cowrie.socket >/dev/null
 systemctl enable --now cowrie.service opencanary.service flypaper-capture.service >/dev/null
 systemctl restart cowrie.service opencanary.service flypaper-capture.service
 sleep 3
+
+if [ "$WEB_HONEYPOT" = beelzebub ]; then
+  log "Installing Beelzebub as the web honeypot"
+  if [ -f "$WEB_HONEYPOT_SCRIPT" ]; then
+    cp "$WEB_HONEYPOT_SCRIPT" /root/web-honeypot.sh
+  else
+    curl -fsSL "$WEB_HONEYPOT_SCRIPT" -o /root/web-honeypot.sh
+  fi
+  BEELZEBUB_VERSION="$BEELZEBUB_VERSION" FLYPAPER_VERSION="$FLYPAPER_VERSION" BEELZEBUB_BIN="${BEELZEBUB_BIN:-}" \
+    HTTP_EXTRA_PORTS="8080 $HTTP_EXTRA_PORTS" MGMT_SSH_PORT="$MGMT_SSH_PORT" bash /root/web-honeypot.sh | sed 's/^/    /'
+  HONEY_PORTS+=(80)
+fi
 systemctl enable --now flypaper.service >/dev/null
 systemctl restart flypaper.service
 
 # ---------------------------------------------------------------- self-check
 log "Self-check"
 rc=0
-for unit in cowrie.socket cowrie.service opencanary.service flypaper-capture.service flypaper.service; do
+units="cowrie.socket cowrie.service opencanary.service flypaper-capture.service flypaper.service"
+[ "$WEB_HONEYPOT" = beelzebub ] && units="$units beelzebub.service flypaper-redirect.service"
+for unit in $units; do
   if systemctl is-active --quiet "$unit"; then echo "  ok    $unit"; else echo "  FAIL  $unit"; rc=1; fi
 done
 for p in 22 23 "${HONEY_PORTS[@]}"; do

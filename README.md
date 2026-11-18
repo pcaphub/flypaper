@@ -4,7 +4,7 @@ Turn a cheap Linux VPS into a honeypot that feeds [PcapHub](https://pcaphub.com)
 
 One command installs the honeypots, the capture ring buffer and the collector. The collector slices every attacker session into its own small pcap, joins it with what the honeypot logged (credentials, commands, downloads), scores it, drops the repeats, writes a plain-language description, and uploads the interesting ones as private captures to your PcapHub account. PcapHub does the rest: tshark dissection, Suricata, artifacts, timeline.
 
-Everything is open source and free of charge: [Cowrie](https://github.com/cowrie/cowrie) (SSH and Telnet, BSD-3), [OpenCanary](https://github.com/thinkst/opencanary) (HTTP, FTP, MySQL, MSSQL, Redis, RDP, VNC, TFTP, HTTP proxy, a banner on 445; BSD-3), `dumpcap` from Wireshark for the ring buffer, and this Go collector (MIT). No root honeypots: Cowrie gets ports 22 and 23 from systemd socket activation, OpenCanary runs with only `CAP_NET_BIND_SERVICE`, the ring buffer runs as an unprivileged user in the `wireshark` group.
+Everything is open source and free of charge: [Cowrie](https://github.com/cowrie/cowrie) (SSH and Telnet, BSD-3), [Beelzebub](https://github.com/beelzebub-labs/beelzebub) (the web honeypot: its WordPress emulation answers like a real site so scanners carry on to their payload, and it logs every request with the complete body; GPL-3, binary built unmodified by this repo's CI, see `THIRD_PARTY.md`), [OpenCanary](https://github.com/thinkst/opencanary) (FTP, MySQL, MSSQL, Redis, RDP, VNC, TFTP, a banner on 445; BSD-3), `dumpcap` from Wireshark for the ring buffer, and this Go collector (MIT). No root honeypots: Cowrie gets ports 22 and 23 from systemd socket activation, OpenCanary runs with only `CAP_NET_BIND_SERVICE`, the ring buffer runs as an unprivileged user in the `wireshark` group.
 
 ## Quick start
 
@@ -15,7 +15,7 @@ curl -fsSL https://raw.githubusercontent.com/pcaphub/flypaper/main/install/insta
 sudo PCAPHUB_API_KEY=phk_... FLYPAPER_NAME=hel-1 bash install.sh
 ```
 
-The web honeypot answers on 80 and 8080 and, through an nftables redirect (`install/http-ports.sh`, `HTTP_EXTRA_PORTS`), on the other ports exploit kits sweep: 81, 8000, 8081, 8088, 8443, 8888, 9000, 7547, 2375, 9200, 5601. Captures keep the real port. The installer moves your real SSH to port 22222 (`MGMT_SSH_PORT`, key auth only), opens the honeypot ports, installs the honeypots and the collector as systemd services, and runs `flypaper check`. Read `install/install.sh` first; it is short and it is your machine.
+The web honeypot answers on 80 and, through an nftables redirect (`install/http-ports.sh`, `HTTP_EXTRA_PORTS`), on the other ports exploit kits sweep: 8080, 81, 8000, 8081, 8088, 8443, 8888, 9000, 7547, 2375, 9200, 5601. Captures keep the real port. `WEB_HONEYPOT=opencanary` keeps OpenCanary's login page instead of Beelzebub. The installer moves your real SSH to port 22222 (`MGMT_SSH_PORT`, key auth only), opens the honeypot ports, installs the honeypots and the collector as systemd services, and runs `flypaper check`. Read `install/install.sh` first; it is short and it is your machine.
 
 The API key needs only the `upload` scope (PcapHub, Settings, API Keys). A key with that scope can create private captures and edit their descriptions and nothing else, so a compromised honeypot cannot touch anything you care about.
 
@@ -34,7 +34,7 @@ Deduplication is layered and measurable, because a honeypot sees the same bot th
 
 `flypaper stats` prints sessions seen vs uploaded, lifetime and per class, and every description carries the collector's totals.
 
-New techniques are caught without anyone writing a rule first: HTTP request lines and POST bodies are read straight from the packets (so a PHP-to-shell probe is seen whether or not the honeypot understands it), a request path, command or payload template never seen on this collector adds a **novelty bonus** to the score (not for scans and password sprays, whose only payload is the protocol handshake), `select.exploit_patterns` in the config takes extra regular expressions without a rebuild, and PcapHub's Suricata pass marks signatures the collector has never produced before.
+New techniques are caught without anyone writing a rule first: HTTP request lines and POST bodies are read straight from the packets (so a PHP-to-shell probe is seen whether or not the honeypot understands it) and completed from the web honeypot's log when a body spans several segments, a request path, command or payload template never seen on this collector adds a **novelty bonus** to the score (not for scans and password sprays, whose only payload is the protocol handshake), `select.exploit_patterns` in the config takes extra regular expressions without a rebuild, and PcapHub's Suricata pass marks signatures the collector has never produced before.
 
 Classes, lowest to highest score: `scan-only`, `ssh-bruteforce`, `login-bruteforce` (VNC, MSSQL, MySQL, FTP, RDP password sprays), `telnet-iot`, `service-probe`, `ssh-login-success`, `ssh-port-forward`, `commands-executed`, `web-exploit-attempt`, `malware-download`.
 

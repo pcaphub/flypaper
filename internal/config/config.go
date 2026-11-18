@@ -66,6 +66,9 @@ type Logs struct {
 	Cowrie string `yaml:"cowrie"`
 	// OpenCanary JSON log (optional).
 	OpenCanary string `yaml:"opencanary"`
+	// Beelzebub event log (optional): the web honeypot, with complete
+	// request bodies.
+	Beelzebub string `yaml:"beelzebub"`
 }
 
 type Select struct {
@@ -115,6 +118,7 @@ func Default() Config {
 		Logs: Logs{
 			Cowrie:     "/var/log/cowrie/cowrie.json",
 			OpenCanary: "/var/log/opencanary/opencanary.log",
+			Beelzebub:  "/var/log/beelzebub/beelzebub.log",
 		},
 		Select: Select{
 			IdleGap:             5 * time.Minute,

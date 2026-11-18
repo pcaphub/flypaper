@@ -157,6 +157,38 @@ func RunWith(s *session.Session, evs []honeylog.Event, opt Options) Result {
 			if f.ClientVersion == "" {
 				f.ClientVersion = e.Input
 			}
+		case "request":
+			// the web honeypot's log: request line plus the complete body,
+			// which the wire-level pass only has the first segment of
+			req := strings.TrimSpace(e.Input)
+			if req != "" && !seenReq[req] && len(f.HTTPRequests) < 100 {
+				seenReq[req] = true
+				f.HTTPRequests = append(f.HTTPRequests, req)
+			}
+			if body := printable([]byte(e.Message), 1000); body != "" && !seenPayload[body] && len(f.Payloads) < 50 {
+				// the wire-level pass kept the first segment of this body; the
+				// log has more of it, so the shorter sample goes
+				kept := f.Payloads[:0]
+				for _, p := range f.Payloads {
+					if !strings.HasPrefix(body, p) {
+						kept = append(kept, p)
+					}
+				}
+				f.Payloads = kept
+				seenPayload[body] = true
+				f.Payloads = append(f.Payloads, body)
+			}
+			// a long body padded before the interesting part: keep the part
+			// around the first exploit indicator as a second sample
+			if len(e.Message) > 1000 {
+				if loc := reExploit.FindStringIndex(e.Message); loc != nil && loc[0] >= 1000 {
+					from, to := max(0, loc[0]-100), min(len(e.Message), loc[1]+300)
+					if snip := printable([]byte(e.Message[from:to]), 400); snip != "" && !seenPayload[snip] && len(f.Payloads) < 50 {
+						seenPayload[snip] = true
+						f.Payloads = append(f.Payloads, "..."+snip)
+					}
+				}
+			}
 		}
 		// URLs typed in commands count as downloads too (wget/curl/tftp).
 		if e.Kind == "command" {

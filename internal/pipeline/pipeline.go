@@ -101,6 +101,14 @@ func (p *Pipeline) Run(ctx context.Context) (*Summary, error) {
 		events = append(events, more...)
 		sort.SliceStable(events, func(i, j int) bool { return events[i].Time.Before(events[j].Time) })
 	}
+	if p.Cfg.Logs.Beelzebub != "" {
+		more, err := honeylog.ReadBeelzebubFiles(p.Cfg.Logs.Beelzebub)
+		if err != nil {
+			p.Log.Warn("reading beelzebub log", "error", err)
+		}
+		events = append(events, more...)
+		sort.SliceStable(events, func(i, j int) bool { return events[i].Time.Before(events[j].Time) })
+	}
 	index := honeylog.NewIndex(events)
 
 	// Dedupe guard: if this collector uploaded more than max_ratio of the

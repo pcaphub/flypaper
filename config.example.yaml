@@ -26,6 +26,7 @@ capture:
 logs:
   cowrie: /var/log/cowrie/cowrie.json
   opencanary: /var/log/opencanary/opencanary.log
+  beelzebub: /var/log/beelzebub/beelzebub.log     # web honeypot, complete request bodies
 
 select:
   idle_gap: 5m        # a remote that goes quiet for this long starts a new session

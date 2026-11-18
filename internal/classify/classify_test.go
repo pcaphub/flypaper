@@ -2,6 +2,7 @@ package classify
 
 import (
 	"net"
+	"strings"
 	"testing"
 	"time"
 
@@ -153,5 +154,63 @@ func TestBinaryProbesShareOneFingerprint(t *testing.T) {
 	c := Run(mk("198.51.100.3", ""), nil)
 	if c.Class != ServiceProbe || c.Score != 35 {
 		t.Errorf("binary-only probe: class %s score %d", c.Class, c.Score)
+	}
+}
+
+// The web honeypot's log carries the whole POST body; the wire-level pass
+// has the request line already. Both end up once in the facts and the body
+// decides the class.
+func TestWebHoneypotLogSuppliesTheBody(t *testing.T) {
+	s := httpSession(t, "POST /vendor/phpunit/phpunit/src/Util/PHP/eval-stdin.php")
+	evs := []honeylog.Event{{
+		Time: s.Start, Source: "beelzebub", Service: "http", Kind: "request", SrcIP: s.Remote,
+		Input:   "POST /vendor/phpunit/phpunit/src/Util/PHP/eval-stdin.php",
+		Message: "<?php echo md5('flypaper'); ?>",
+	}}
+	r := Run(s, evs)
+	if r.Class != WebExploit {
+		t.Fatalf("class %s", r.Class)
+	}
+	if len(r.Facts.HTTPRequests) != 1 {
+		t.Errorf("request duplicated: %v", r.Facts.HTTPRequests)
+	}
+	if len(r.Facts.Payloads) != 1 || !strings.Contains(r.Facts.Payloads[0], "md5") {
+		t.Errorf("body not taken from the log: %v", r.Facts.Payloads)
+	}
+}
+
+func TestLongPaddedBodyKeepsTheExploitPart(t *testing.T) {
+	s := httpSession(t, "POST /index.php")
+	body := "a=" + strings.Repeat("X", 3000) + "&code=<?php echo md5('flypaper-e2e'); ?>"
+	evs := []honeylog.Event{{Time: s.Start, Source: "beelzebub", Service: "http", Kind: "request", SrcIP: s.Remote, Input: "POST /index.php", Message: body}}
+	r := Run(s, evs)
+	if r.Class != WebExploit {
+		t.Fatalf("class %s", r.Class)
+	}
+	found := false
+	for _, p := range r.Facts.Payloads {
+		if strings.Contains(p, "flypaper-e2e") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("exploit part not kept: %v", r.Facts.Payloads)
+	}
+}
+
+func TestLogBodyReplacesWireFirstSegment(t *testing.T) {
+	body := "cmd=" + strings.Repeat("Y", 500) + "&x=1"
+	// wire: the request with a body that is cut after 300 printable bytes
+	s := &session.Session{Remote: net.ParseIP("198.51.100.5"), LinkType: layers.LinkTypeEthernet, LocalPorts: []int{80}}
+	at := time.Date(2026, 11, 18, 12, 0, 0, 0, time.UTC)
+	payload := []byte("POST /index.php HTTP/1.1\r\nHost: x\r\n\r\n" + body)
+	ci := gopacket.CaptureInfo{Timestamp: at, CaptureLength: len(payload), Length: len(payload)}
+	s.Packets = []session.Packet{{CI: ci, Data: payload, Payload: payload, Remote: s.Remote, Proto: layers.IPProtocolTCP, RemPort: 40000, LocPort: 80, ToLocal: true}}
+	s.Flows = []session.Flow{{Proto: layers.IPProtocolTCP, RemPort: 40000, LocPort: 80, Pkts: 1}}
+	s.Start, s.End, s.TotalPkts = at, at, 1
+	evs := []honeylog.Event{{Time: at, Source: "beelzebub", Service: "http", Kind: "request", SrcIP: s.Remote, Input: "POST /index.php", Message: body}}
+	r := Run(s, evs)
+	if len(r.Facts.Payloads) != 1 || len(r.Facts.Payloads[0]) != len(body) {
+		t.Errorf("payloads = %d samples, first len %d (want 1 sample of %d)", len(r.Facts.Payloads), len(r.Facts.Payloads[0]), len(body))
 	}
 }
