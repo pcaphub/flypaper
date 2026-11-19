@@ -166,11 +166,11 @@ chmod 0750 /var/log/cowrie /var/log/opencanary   # group (flypaper is a member) 
 
 # ---------------------------------------------------------------- Cowrie
 log "Installing Cowrie $COWRIE_VERSION"
-if [ ! -x /opt/cowrie/env/bin/cowrie ] || ! /opt/cowrie/env/bin/pip show cowrie 2>/dev/null | grep -q "^Version: $COWRIE_VERSION\$"; then
+if [ ! -x /opt/cowrie/env/bin/cowrie ] || [ ! -x /opt/cowrie/env/bin/twistd ] || ! /opt/cowrie/env/bin/pip show cowrie 2>/dev/null | grep -q "^Version: $COWRIE_VERSION\$"; then
   runuser -u cowrie -- bash -c "
     set -e
     cd /opt/cowrie
-    [ -d env ] || python3 -m venv env
+    rm -rf env && python3 -m venv env
     env/bin/pip install -q --upgrade pip
     env/bin/pip install -q 'cowrie==$COWRIE_VERSION'
   "
@@ -255,11 +255,14 @@ chown root:cowrie /opt/cowrie/etc/cowrie.cfg && chmod 0640 /opt/cowrie/etc/cowri
 
 # ---------------------------------------------------------------- OpenCanary
 log "Installing OpenCanary $OPENCANARY_VERSION"
-if ! /opt/opencanary/env/bin/pip show opencanary 2>/dev/null | grep -q "^Version: $OPENCANARY_VERSION\$"; then
+# pip records the version before it has copied every file, so a run that
+# died mid-install (full disk, lost network) leaves "installed" metadata and
+# no twistd; the launch files are checked too and a failed venv is rebuilt.
+if [ ! -x /opt/opencanary/env/bin/twistd ] || [ ! -f /opt/opencanary/env/bin/opencanary.tac ] || ! /opt/opencanary/env/bin/pip show opencanary 2>/dev/null | grep -q "^Version: $OPENCANARY_VERSION\$"; then
   runuser -u opencanary -- bash -c "
     set -e
     cd /opt/opencanary
-    [ -d env ] || python3 -m venv env
+    rm -rf env && python3 -m venv env
     env/bin/pip install -q --upgrade pip
     env/bin/pip install -q 'opencanary==$OPENCANARY_VERSION'
   "
