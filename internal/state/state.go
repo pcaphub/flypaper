@@ -29,16 +29,17 @@ type Scenario struct {
 // File is the persisted document.
 type File struct {
 	Version   int                  `json:"version"`
-	Processed map[string]time.Time `json:"processed"` // ring file name -> when
-	Scenarios map[string]*Scenario `json:"scenarios"` // fingerprint -> record
-	Uploads   map[string]int       `json:"uploads"`   // "2006-01-02" -> count
-	Baseline  map[string]int       `json:"baseline"`  // day -> baseline samples uploaded
-	LowTier   map[string]int       `json:"low_tier"`  // day -> uploads of scans, sprays and probes
-	Sigs      map[string]bool      `json:"sigs"`      // Suricata SIDs ever seen from this collector
-	Sessions  map[string]int       `json:"sessions"`  // day -> sessions seen (for the dedupe ratio)
-	ByClass   map[string]*Counter  `json:"by_class"`  // class -> seen / uploaded, lifetime
-	Families  map[string][]string  `json:"families"`  // family -> RFC3339 upload times (last 30 days)
-	Templates map[string]time.Time `json:"templates"` // normalised request path / command template -> first seen
+	Processed map[string]time.Time `json:"processed"`          // ring file name -> when
+	Scenarios map[string]*Scenario `json:"scenarios"`          // fingerprint -> record
+	Uploads   map[string]int       `json:"uploads"`            // "2006-01-02" -> count
+	Baseline  map[string]int       `json:"baseline"`           // day -> baseline samples uploaded
+	LowTier   map[string]int       `json:"low_tier"`           // day -> uploads of scans, sprays and probes
+	Sigs      map[string]bool      `json:"sigs"`               // Suricata SIDs ever seen from this collector
+	Sessions  map[string]int       `json:"sessions"`           // day -> sessions seen (for the dedupe ratio)
+	ByClass   map[string]*Counter  `json:"by_class"`           // class -> seen / uploaded, lifetime
+	Families  map[string][]string  `json:"families"`           // family -> RFC3339 upload times (last 30 days)
+	Templates map[string]time.Time `json:"templates"`          // normalised request path / command template -> first seen
+	Attempts  map[string]int       `json:"attempts,omitempty"` // ring file name -> passes that started on it
 }
 
 // Counter is a seen/uploaded pair.
@@ -99,6 +100,9 @@ func Open(dir string) (*Store, error) {
 	}
 	if s.F.Templates == nil {
 		s.F.Templates = map[string]time.Time{}
+	}
+	if s.F.Attempts == nil {
+		s.F.Attempts = map[string]int{}
 	}
 	s.F.Version = 1
 	return s, nil
@@ -178,6 +182,18 @@ func (s *Store) MarkProcessed(name string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.F.Processed[name] = time.Now()
+	delete(s.F.Attempts, name)
+}
+
+// Attempt counts one more pass starting on a ring file and returns the total.
+// The count is saved before the file is touched, so a file that kills the
+// process (out of memory, a decoder crash) is given up after a few tries
+// instead of being retried on every restart.
+func (s *Store) Attempt(name string) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.F.Attempts[name]++
+	return s.F.Attempts[name]
 }
 
 // Observe records one sighting of a scenario and returns the record.

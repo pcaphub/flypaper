@@ -329,3 +329,91 @@ func indexOf(s, sub string) int {
 	}
 	return -1
 }
+
+// A ring file that keeps killing the process before it is marked processed is
+// given up after maxFileAttempts starts; the attempt is on disk before the
+// file is read, and a finished file leaves no attempt behind.
+func TestRingFileGivenUpAfterRepeatedAttempts(t *testing.T) {
+	ring, cowrie := synth(t)
+	cfg := testConfig(t, ring, cowrie)
+	name := "ring_00001_20261117090000.pcap"
+	for i := 1; i <= maxFileAttempts; i++ {
+		// each "crashed" pass: count the attempt the way Run does, save, die
+		st, err := state.Open(cfg.StateDir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if n := st.Attempt(name); n != i {
+			t.Fatalf("attempt %d counted as %d", i, n)
+		}
+		if err := st.Save(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	st, err := state.Open(cfg.StateDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := &Pipeline{Cfg: cfg, State: st, Log: slog.New(slog.NewTextHandler(os.Stderr, nil))}
+	sum, err := p.Run(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sum.Files != 0 || sum.Sessions != 0 {
+		t.Fatalf("file should have been given up: files=%d sessions=%d", sum.Files, sum.Sessions)
+	}
+	if !st.IsProcessed(name) {
+		t.Fatal("given-up file not marked processed")
+	}
+	if n := st.F.Attempts[name]; n != 0 {
+		t.Fatalf("attempt record left behind: %d", n)
+	}
+
+	// a fresh state processes the same file normally and clears its attempt
+	cfg.StateDir = filepath.Join(t.TempDir(), "state2")
+	st2, _ := state.Open(cfg.StateDir)
+	p2 := &Pipeline{Cfg: cfg, State: st2, Log: p.Log}
+	sum, err = p2.Run(context.Background())
+	if err != nil || sum.Files != 1 {
+		t.Fatalf("normal pass: files=%d err=%v", sum.Files, err)
+	}
+	if _, ok := st2.F.Attempts[name]; ok {
+		t.Fatal("attempt record not cleared after a finished pass")
+	}
+}
+
+// A ring file over max_file_bytes is skipped and marked processed, never read.
+func TestOversizedRingFileSkipped(t *testing.T) {
+	ring, cowrie := synth(t)
+	cfg := testConfig(t, ring, cowrie)
+	cfg.Capture.MaxFileBytes = 1024
+	st, _ := state.Open(cfg.StateDir)
+	p := &Pipeline{Cfg: cfg, State: st, Log: slog.New(slog.NewTextHandler(os.Stderr, nil))}
+	sum, err := p.Run(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sum.Files != 0 || sum.Sessions != 0 {
+		t.Fatalf("oversized file was sliced: files=%d sessions=%d", sum.Files, sum.Sessions)
+	}
+	if !st.IsProcessed("ring_00001_20261117090000.pcap") {
+		t.Fatal("oversized file not marked processed")
+	}
+}
+
+// Only the honeypot events around the pending ring files are loaded.
+func TestLogsFromUsesFirstPacketTime(t *testing.T) {
+	ring, cowrie := synth(t)
+	cfg := testConfig(t, ring, cowrie)
+	st, _ := state.Open(cfg.StateDir)
+	p := &Pipeline{Cfg: cfg, State: st, Log: slog.New(slog.NewTextHandler(os.Stderr, nil)), Now: time.Now}
+	files, err := p.closedRingFiles()
+	if err != nil || len(files) != 1 {
+		t.Fatalf("files=%v err=%v", files, err)
+	}
+	from := p.logsFrom(files)
+	want := t0.Add(-10 * time.Minute)
+	if !from.Equal(want) {
+		t.Fatalf("logsFrom = %s, want %s (first packet - 10 min)", from, want)
+	}
+}

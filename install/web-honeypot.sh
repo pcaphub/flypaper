@@ -128,7 +128,7 @@ ProtectKernelModules=yes
 ProtectControlGroups=yes
 LockPersonality=yes
 RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
-MemoryMax=384M
+MemoryMax=256M
 
 [Install]
 WantedBy=multi-user.target

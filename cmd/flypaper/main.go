@@ -145,6 +145,7 @@ func main() {
 			fatal(log, err.Error())
 		}
 	case "run":
+		applyMemoryLimit(log)
 		p, err := newPipeline(cfg, log)
 		if err != nil {
 			fatal(log, err.Error())

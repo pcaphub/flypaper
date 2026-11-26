@@ -6,9 +6,6 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"os"
-	"path/filepath"
-	"sort"
 	"strings"
 	"time"
 )
@@ -178,24 +175,4 @@ func nonEmpty(parts ...string) []string {
 		}
 	}
 	return out
-}
-
-// ReadOpenCanaryFiles reads the live log and rotated siblings.
-func ReadOpenCanaryFiles(live string) ([]Event, error) {
-	matches, _ := filepath.Glob(live + "*")
-	var all []Event
-	for _, m := range matches {
-		f, err := os.Open(m)
-		if err != nil {
-			continue
-		}
-		evs, err := ReadOpenCanary(f)
-		f.Close()
-		if err != nil {
-			return nil, err
-		}
-		all = append(all, evs...)
-	}
-	sort.SliceStable(all, func(i, j int) bool { return all[i].Time.Before(all[j].Time) })
-	return all, nil
 }

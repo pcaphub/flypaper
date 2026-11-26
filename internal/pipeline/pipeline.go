@@ -89,12 +89,35 @@ func (p *Pipeline) Run(ctx context.Context) (*Summary, error) {
 		return sum, nil
 	}
 
-	events, err := honeylog.ReadCowrieFiles(p.Cfg.Logs.Cowrie)
+	// An hour of flood traffic would be held in memory whole: skip it.
+	var pending []string
+	for _, f := range files {
+		if st, err := os.Stat(f); err == nil && p.Cfg.Capture.MaxFileBytes > 0 && st.Size() > p.Cfg.Capture.MaxFileBytes {
+			p.Log.Error("ring file over the size limit, skipped", "file", filepath.Base(f), "bytes", st.Size(), "limit", p.Cfg.Capture.MaxFileBytes)
+			p.State.MarkProcessed(filepath.Base(f))
+			continue
+		}
+		pending = append(pending, f)
+	}
+	if len(pending) < len(files) {
+		if err := p.State.Save(); err != nil {
+			return sum, err
+		}
+	}
+	files = pending
+	if len(files) == 0 {
+		return sum, nil
+	}
+
+	// Honeypot events are only needed around the hours being sliced: from
+	// the start of the oldest pending file, with the slicer's join window.
+	logsFrom := p.logsFrom(files)
+	events, err := honeylog.ReadCowrieFilesSince(p.Cfg.Logs.Cowrie, logsFrom)
 	if err != nil {
 		p.Log.Warn("reading cowrie log", "error", err)
 	}
 	if p.Cfg.Logs.OpenCanary != "" {
-		more, err := honeylog.ReadOpenCanaryFiles(p.Cfg.Logs.OpenCanary)
+		more, err := honeylog.ReadOpenCanaryFilesSince(p.Cfg.Logs.OpenCanary, logsFrom)
 		if err != nil {
 			p.Log.Warn("reading opencanary log", "error", err)
 		}
@@ -102,7 +125,7 @@ func (p *Pipeline) Run(ctx context.Context) (*Summary, error) {
 		sort.SliceStable(events, func(i, j int) bool { return events[i].Time.Before(events[j].Time) })
 	}
 	if p.Cfg.Logs.Beelzebub != "" {
-		more, err := honeylog.ReadBeelzebubFiles(p.Cfg.Logs.Beelzebub)
+		more, err := honeylog.ReadBeelzebubFilesSince(p.Cfg.Logs.Beelzebub, logsFrom)
 		if err != nil {
 			p.Log.Warn("reading beelzebub log", "error", err)
 		}
@@ -110,6 +133,7 @@ func (p *Pipeline) Run(ctx context.Context) (*Summary, error) {
 		sort.SliceStable(events, func(i, j int) bool { return events[i].Time.Before(events[j].Time) })
 	}
 	index := honeylog.NewIndex(events)
+	events = nil
 
 	// Dedupe guard: if this collector uploaded more than max_ratio of the
 	// sessions it saw over the last 7 days, demand a higher score this pass.
@@ -125,6 +149,19 @@ func (p *Pipeline) Run(ctx context.Context) (*Summary, error) {
 	for _, f := range files {
 		if ctx.Err() != nil {
 			return sum, ctx.Err()
+		}
+		// Give up on a file that has already killed the process (out of
+		// memory, a decoder crash): the attempt is counted and saved before
+		// the file is touched, so a bad hour is skipped on the third start
+		// instead of looping the service through restarts. Counted per file,
+		// right before it is read, so the files behind it are not blamed.
+		if n := p.State.Attempt(filepath.Base(f)); n > maxFileAttempts {
+			p.Log.Error("ring file gave up after repeated failed passes, skipped", "file", filepath.Base(f), "attempts", n-1)
+			p.State.MarkProcessed(filepath.Base(f))
+			continue
+		}
+		if err := p.State.Save(); err != nil {
+			return sum, err
 		}
 		sessions, err := session.Slice(f, opt)
 		if err != nil {
@@ -171,6 +208,32 @@ func (p *Pipeline) Run(ctx context.Context) (*Summary, error) {
 	}
 	p.expireRing()
 	return sum, p.State.Save()
+}
+
+// maxFileAttempts is how many passes may start on one ring file before it is
+// given up.
+const maxFileAttempts = 2
+
+// logsFrom is the earliest honeypot event worth reading for these files: the
+// first packet of the oldest pending file, less a margin for the classifier's
+// 45 s join window and clock drift. The packet time is used rather than the
+// file's mtime so ring files copied to a new host still find their events.
+// Zero (read everything) when no file yields a time.
+func (p *Pipeline) logsFrom(files []string) time.Time {
+	var oldest time.Time
+	for _, f := range files {
+		t, err := session.FirstPacketTime(f)
+		if err != nil || t.IsZero() {
+			continue
+		}
+		if oldest.IsZero() || t.Before(oldest) {
+			oldest = t
+		}
+	}
+	if oldest.IsZero() {
+		return time.Time{}
+	}
+	return oldest.Add(-10 * time.Minute)
 }
 
 // closedRingFiles lists ring files old enough to be closed and not yet processed.

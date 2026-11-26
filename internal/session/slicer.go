@@ -89,31 +89,56 @@ func Slice(path string, opt Options) ([]*Session, error) {
 	return SliceReader(f, opt)
 }
 
-// SliceReader is Slice over an open file.
-func SliceReader(r io.ReadSeeker, opt Options) ([]*Session, error) {
+// FirstPacketTime returns the timestamp of the first packet in the pcap or
+// pcapng at path, reading only that far. Zero when the file holds none.
+func FirstPacketTime(path string) (time.Time, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return time.Time{}, err
+	}
+	defer f.Close()
+	src, _, err := openSource(f)
+	if err != nil {
+		return time.Time{}, err
+	}
+	_, ci, err := src.ReadPacketData()
+	if err != nil {
+		if err == io.EOF || errors.Is(err, io.ErrUnexpectedEOF) {
+			return time.Time{}, nil
+		}
+		return time.Time{}, err
+	}
+	return ci.Timestamp, nil
+}
+
+// openSource picks the pcap or pcapng reader by magic.
+func openSource(r io.ReadSeeker) (gopacket.PacketDataSource, layers.LinkType, error) {
 	var magic [4]byte
 	if _, err := io.ReadFull(r, magic[:]); err != nil {
-		return nil, fmt.Errorf("reading magic: %w", err)
+		return nil, 0, fmt.Errorf("reading magic: %w", err)
 	}
 	if _, err := r.Seek(0, io.SeekStart); err != nil {
-		return nil, err
+		return nil, 0, err
 	}
-	var (
-		src      gopacket.PacketDataSource
-		linkType layers.LinkType
-	)
 	if magic == [4]byte{0x0a, 0x0d, 0x0d, 0x0a} {
 		ng, err := pcapgo.NewNgReader(r, pcapgo.DefaultNgReaderOptions)
 		if err != nil {
-			return nil, fmt.Errorf("pcapng: %w", err)
+			return nil, 0, fmt.Errorf("pcapng: %w", err)
 		}
-		src, linkType = ng, ng.LinkType()
-	} else {
-		pr, err := pcapgo.NewReader(r)
-		if err != nil {
-			return nil, fmt.Errorf("pcap: %w", err)
-		}
-		src, linkType = pr, pr.LinkType()
+		return ng, ng.LinkType(), nil
+	}
+	pr, err := pcapgo.NewReader(r)
+	if err != nil {
+		return nil, 0, fmt.Errorf("pcap: %w", err)
+	}
+	return pr, pr.LinkType(), nil
+}
+
+// SliceReader is Slice over an open file.
+func SliceReader(r io.ReadSeeker, opt Options) ([]*Session, error) {
+	src, linkType, err := openSource(r)
+	if err != nil {
+		return nil, err
 	}
 
 	// First pass: decode what we need from every packet. Ring files are an

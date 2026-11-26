@@ -9,8 +9,6 @@ import (
 	"errors"
 	"io"
 	"net"
-	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -137,30 +135,6 @@ func parseCowrieTime(s string) (time.Time, error) {
 		}
 	}
 	return time.Time{}, errors.New("bad timestamp " + s)
-}
-
-// ReadCowrieFiles reads the live log and its rotated siblings (cowrie.json,
-// cowrie.json.2026-11-17, ...) and returns events sorted by time.
-func ReadCowrieFiles(live string) ([]Event, error) {
-	matches, _ := filepath.Glob(live + "*")
-	if len(matches) == 0 {
-		return nil, nil
-	}
-	var all []Event
-	for _, m := range matches {
-		f, err := os.Open(m)
-		if err != nil {
-			continue
-		}
-		evs, err := ReadCowrie(f)
-		f.Close()
-		if err != nil {
-			return nil, err
-		}
-		all = append(all, evs...)
-	}
-	sort.SliceStable(all, func(i, j int) bool { return all[i].Time.Before(all[j].Time) })
-	return all, nil
 }
 
 // Index groups events by source address for fast lookup per slice.

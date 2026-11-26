@@ -2,13 +2,9 @@ package honeylog
 
 import (
 	"bufio"
-	"compress/gzip"
 	"encoding/json"
 	"io"
 	"net"
-	"os"
-	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -86,34 +82,4 @@ func ReadBeelzebub(r io.Reader) ([]Event, error) {
 		})
 	}
 	return out, sc.Err()
-}
-
-// ReadBeelzebubFiles reads the live log and its rotated siblings
-// (beelzebub.log.1, beelzebub.log.2.gz, ...).
-func ReadBeelzebubFiles(live string) ([]Event, error) {
-	matches, _ := filepath.Glob(live + "*")
-	var all []Event
-	for _, m := range matches {
-		f, err := os.Open(m)
-		if err != nil {
-			continue
-		}
-		var r io.Reader = f
-		if strings.HasSuffix(m, ".gz") {
-			gz, err := gzip.NewReader(f)
-			if err != nil {
-				f.Close()
-				continue
-			}
-			r = gz
-		}
-		evs, err := ReadBeelzebub(r)
-		f.Close()
-		if err != nil {
-			return nil, err
-		}
-		all = append(all, evs...)
-	}
-	sort.SliceStable(all, func(i, j int) bool { return all[i].Time.Before(all[j].Time) })
-	return all, nil
 }

@@ -58,6 +58,11 @@ type Capture struct {
 	ExcludeIPs   []string `yaml:"exclude_ips"`
 	// Delete processed ring files older than this (0 = never delete).
 	Retention time.Duration `yaml:"retention"`
+	// Ring files larger than this are skipped (logged, marked processed) instead
+	// of sliced: an hour of flood traffic would otherwise be held in memory
+	// whole, at two to three times its size. Default 96 MB, sized for the
+	// collector unit's 512 MB cap (a normal hour is 20 to 40 MB).
+	MaxFileBytes int64 `yaml:"max_file_bytes"`
 }
 
 type Logs struct {
@@ -110,10 +115,11 @@ func Default() Config {
 			Tags: []string{"honeypot"},
 		},
 		Capture: Capture{
-			Dir:       "/var/lib/flypaper/ring",
-			Pattern:   "*.pcap*",
-			MinAge:    2 * time.Minute,
-			Retention: 7 * 24 * time.Hour,
+			Dir:          "/var/lib/flypaper/ring",
+			Pattern:      "*.pcap*",
+			MinAge:       2 * time.Minute,
+			Retention:    7 * 24 * time.Hour,
+			MaxFileBytes: 96 << 20,
 		},
 		Logs: Logs{
 			Cowrie:     "/var/log/cowrie/cowrie.json",

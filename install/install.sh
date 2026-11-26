@@ -22,6 +22,7 @@
 #   BEELZEBUB_VERSION      default v3.10.0 (upstream tag; the binary comes from flypaper's release page)
 #   HTTP_EXTRA_PORTS       more ports answered by the web honeypot (nftables redirect), default "81 8000 8081 8088 8443 8888 9000 7547 2375 9200 5601" (+8080 with beelzebub)
 #   CAPTURE_IFACE          default: the default-route interface
+#   SWAP_MB                swap file added when the host has none, default 1024 (0 = skip)
 #
 # What it does, in order: packages; move sshd to MGMT_SSH_PORT (key auth only
 # when a key is present); firewall; users and directories; Cowrie (SSH 22,
@@ -52,6 +53,7 @@ fi
 : "${HTTP_PORTS_SCRIPT:=https://raw.githubusercontent.com/pcaphub/flypaper/main/install/http-ports.sh}"
 : "${WEB_HONEYPOT_SCRIPT:=https://raw.githubusercontent.com/pcaphub/flypaper/main/install/web-honeypot.sh}"
 : "${CAPTURE_IFACE:=}"
+: "${SWAP_MB:=1024}"
 REPO="pcaphub/flypaper"
 
 log()  { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
@@ -164,6 +166,21 @@ install -d -o root -g flypaper -m 0750 /etc/flypaper
 install -d -m 0755 /etc/opencanaryd
 chmod 0750 /var/log/cowrie /var/log/opencanary   # group (flypaper is a member) may read
 
+# ---------------------------------------------------------------- swap
+# Small VPS images ship without swap; the honeypots and the collector are
+# each capped (MemoryMax below) but a 1 GB host still needs room for a busy
+# hour. A swap file is only added when the host has no swap at all.
+if [ "$SWAP_MB" != "0" ] && [ "$(swapon --noheadings --show=NAME | wc -l)" = "0" ]; then
+  log "Adding a ${SWAP_MB} MB swap file"
+  if [ ! -f /swapfile ]; then
+    fallocate -l "${SWAP_MB}M" /swapfile || dd if=/dev/zero of=/swapfile bs=1M count="$SWAP_MB" status=none
+    chmod 0600 /swapfile
+    mkswap -q /swapfile
+  fi
+  swapon /swapfile
+  grep -q '^/swapfile ' /etc/fstab || echo '/swapfile none swap sw 0 0' >> /etc/fstab
+fi
+
 # ---------------------------------------------------------------- Cowrie
 log "Installing Cowrie $COWRIE_VERSION"
 if [ ! -x /opt/cowrie/env/bin/cowrie ] || [ ! -x /opt/cowrie/env/bin/twistd ] || ! /opt/cowrie/env/bin/pip show cowrie 2>/dev/null | grep -q "^Version: $COWRIE_VERSION\$"; then
@@ -246,7 +263,7 @@ ProtectKernelModules=yes
 ProtectControlGroups=yes
 RestrictSUIDSGID=yes
 LockPersonality=yes
-MemoryMax=512M
+MemoryMax=384M
 
 [Install]
 WantedBy=multi-user.target
@@ -337,7 +354,7 @@ ProtectKernelTunables=yes
 ProtectKernelModules=yes
 ProtectControlGroups=yes
 LockPersonality=yes
-MemoryMax=512M
+MemoryMax=256M
 
 [Install]
 WantedBy=multi-user.target
@@ -366,7 +383,7 @@ ProtectHome=yes
 ReadWritePaths=/var/lib/flypaper/ring
 PrivateTmp=yes
 LockPersonality=yes
-MemoryMax=256M
+MemoryMax=128M
 
 [Install]
 WantedBy=multi-user.target
