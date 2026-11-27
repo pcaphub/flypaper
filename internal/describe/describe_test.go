@@ -105,6 +105,9 @@ func TestDayOneTitles(t *testing.T) {
 		{[]string{"GET /SDK/webLanguage"}, "Web exploit attempt: Hikvision camera command injection (CVE-2021-36260)"},
 		{[]string{"GET /%2577eb%2575i_%2577sma_Http"}, "Web exploit attempt: Cisco IOS XE web UI authentication bypass (CVE-2023-20198)"},
 		{[]string{"POST /.well-known/pki-validation/update"}, "Web exploit attempt: Webshell upload via pki-validation path"},
+		{[]string{"GET /cacti/auth_profile.php?tab=general&header=false"}, "Web exploit attempt: Cacti auth_profile.php guest access probe (4HTTP2SHELL step 1)"},
+		{[]string{"GET /cacti/auth_profile.php?tab=general&header=false", "POST /cacti/auth_profile.php?tab=general&action=update_data&header=false __csrf_magic=sid:x&name=preview_graphs_per_page&value=1;UPDATE poller_item SET host_id=1,action=1,arg1=0x6964 WHERE local_data_id=1;--"}, "Web exploit attempt: Cacti guest profile SQL injection to RCE (4HTTP2SHELL, Cacti 1.2.31)"},
+		{[]string{"GET /graph_realtime.php?action=init&local_graph_id=1&ds_step=10&size=90"}, "Web exploit attempt: Cacti guest profile SQL injection to RCE (4HTTP2SHELL, Cacti 1.2.31)"},
 	}
 	for _, c := range cases {
 		r := classify.Result{Class: classify.WebExploit, Facts: classify.Facts{Services: []string{"http"}, LocalPorts: []int{80}, HTTPRequests: c.reqs}}

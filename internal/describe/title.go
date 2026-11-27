@@ -81,6 +81,13 @@ var knownExploits = []struct {
 	{regexp.MustCompile(`(?i)/SDK/webLanguage`), "Hikvision camera command injection (CVE-2021-36260)"},
 	{regexp.MustCompile(`(?i)%2577eb%2575i|webui_wsma`), "Cisco IOS XE web UI authentication bypass (CVE-2023-20198)"},
 	{regexp.MustCompile(`(?i)/\.well-known/pki-validation/`), "Webshell upload via pki-validation path"},
+	// Cacti 1.2.31 "4HTTP2SHELL" (ek0ms savi0r, 2026-11-26, no CVE at the
+	// time of writing): guest profile update stores SQL in
+	// preview_graphs_per_page, graph preview runs it into poller_item.arg1,
+	// graph_realtime pops the command. Step 1 is a plain GET of
+	// auth_profile.php, listed last so a later step names the chain first.
+	{regexp.MustCompile(`(?i)preview_graphs_per_page|UPDATE\s+poller_item|/graph_realtime\.php\?[^ ]*action=init`), "Cacti guest profile SQL injection to RCE (4HTTP2SHELL, Cacti 1.2.31)"},
+	{regexp.MustCompile(`(?i)/auth_profile\.php`), "Cacti auth_profile.php guest access probe (4HTTP2SHELL step 1)"},
 	{regexp.MustCompile(`(?i)/vendor/phpunit|/eval-stdin\.php`), "PHPUnit eval-stdin RCE (CVE-2017-9841)"},
 	{regexp.MustCompile(`(?i)/think/app|invokefunction`), "ThinkPHP invokefunction RCE"},
 	{regexp.MustCompile(`(?i)allow_url_include|auto_prepend_file|php://input`), "PHP-CGI argument injection to shell (CVE-2012-1823 / CVE-2024-4577)"},

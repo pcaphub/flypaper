@@ -67,7 +67,7 @@ var (
 	reNum     = regexp.MustCompile(`\b\d{3,}\b`)
 	reSpaces  = regexp.MustCompile(`\s+`)
 	reHTTPReq = regexp.MustCompile(`^(GET|POST|HEAD|PUT|DELETE|OPTIONS|PATCH|PROPFIND|CONNECT|TRACE) (\S{1,400}) HTTP/1\.[01]\r?\n`)
-	reExploit = regexp.MustCompile(`(?i)(\.\./|%2e%2e|/etc/passwd|cgi-bin|\$\{jndi:|<\?php|eval\(|base64_decode|php://input|allow_url_include|auto_prepend_file|system\(|passthru\(|shell_exec\(|assert\(|\bphpinfo\(|/vendor/phpunit|/eval-stdin\.php|/think/app|invokefunction|wget\s|curl\s|/bin/sh|cmd=|exec\(|union\s+select|sleep\(\d|/shell|/boaform|/GponForm|/HNAP1|/setup\.cgi|/manager/html|/wp-login|/xmlrpc\.php|/\.env|/\.git/|/actuator|/solr/|/jmx|/console/|/_ignition|config set dir|config set dbfilename|slaveof |replicaof |module load|/var/spool/cron|authorized_keys|/\.ssh/|/SDK/webLanguage|%25[0-9a-f]{2}|/\.well-known/pki-validation/)`)
+	reExploit = regexp.MustCompile(`(?i)(\.\./|%2e%2e|/etc/passwd|cgi-bin|\$\{jndi:|<\?php|eval\(|base64_decode|php://input|allow_url_include|auto_prepend_file|system\(|passthru\(|shell_exec\(|assert\(|\bphpinfo\(|/vendor/phpunit|/eval-stdin\.php|/think/app|invokefunction|wget\s|curl\s|/bin/sh|cmd=|exec\(|union\s+select|sleep\(\d|/shell|/boaform|/GponForm|/HNAP1|/setup\.cgi|/manager/html|/wp-login|/xmlrpc\.php|/\.env|/\.git/|/actuator|/solr/|/jmx|/console/|/_ignition|config set dir|config set dbfilename|slaveof |replicaof |module load|/var/spool/cron|authorized_keys|/\.ssh/|/SDK/webLanguage|%25[0-9a-f]{2}|/\.well-known/pki-validation/|/auth_profile\.php|preview_graphs_per_page|poller_item|/graph_realtime\.php\?[^ ]*action=init)`)
 )
 
 // Options tune classification.

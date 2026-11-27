@@ -271,6 +271,16 @@ func TestHTTPPortsFoldIntoOneScenario(t *testing.T) {
 	if c.Class != WebExploit {
 		t.Errorf("double-encoded path: %s", c.Class)
 	}
+	// Cacti 4HTTP2SHELL: each step on its own is an exploit indicator
+	for _, req := range []string{
+		"GET /cacti/auth_profile.php?tab=general&header=false",
+		"POST /cacti/auth_profile.php?tab=general&action=update_data&header=false",
+		"GET /cacti/graph_realtime.php?action=init&local_graph_id=1&ds_step=10&size=90",
+	} {
+		if d := Run(httpSession(t, req), nil); d.Class != WebExploit {
+			t.Errorf("%s: class %s", req, d.Class)
+		}
+	}
 }
 
 // A TLS hello sent to the Redis port is logged by OpenCanary as a "command";
