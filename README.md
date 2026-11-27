@@ -61,6 +61,8 @@ flypaper upgrade      install the latest release (checksum verified) and restart
 - Low-interaction only: attackers get Cowrie's emulated shell, never a real one, so your VPS does not attack others. Check your provider's acceptable use policy; low-interaction honeypots are routinely fine.
 - Management traffic (your SSH port, WireGuard) is excluded from every slice, both at capture (BPF) and in the collector. Connections the honeypot opens itself (updates, DNS) are dropped too.
 - Uploads are private. Promote the good ones to a public collection by hand.
+- The honeypot's own address is rewritten to a documentation address (192.0.2.x, 2001:db8::x) in every uploaded capture, headers and payload text alike, so a published capture does not tell scanners where the honeypot runs. Attacker addresses are kept. `capture.keep_local_ip: true` turns this off.
+- A capture deleted on PcapHub is noticed within a day and its scenario is uploaded again on the next sighting.
 
 ## Licence
 

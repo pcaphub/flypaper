@@ -366,6 +366,19 @@ func (s *Store) NewSignatures(fp string, sids []string) []string {
 
 // Representatives returns scenarios whose seen count moved since the last
 // prevalence update and that have a capture to update.
+// ForgetUpload drops a scenario's upload record after its capture was deleted
+// on PcapHub, so the next sighting is treated like a first one. The sighting
+// counts stay.
+func (s *Store) ForgetUpload(fp string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if sc := s.F.Scenarios[fp]; sc != nil {
+		sc.LastUpload = time.Time{}
+		sc.CaptureID = ""
+		sc.LastReported = sc.Seen
+	}
+}
+
 func (s *Store) Representatives() map[string]*Scenario {
 	s.mu.Lock()
 	defer s.mu.Unlock()

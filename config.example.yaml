@@ -23,6 +23,7 @@ capture:
   exclude_ips: []                    # management peers
   retention: 168h                    # delete processed ring files after 7 days (0 = keep)
   max_file_bytes: 100663296          # skip ring files over 96 MB (a flood hour) instead of slicing them
+  keep_local_ip: false               # false: the honeypot's own address is rewritten to 192.0.2.x before upload
 
 logs:
   cowrie: /var/log/cowrie/cowrie.json

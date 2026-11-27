@@ -412,6 +412,18 @@ func (p *Pipeline) publish(ctx context.Context, c *Candidate) error {
 	base := fmt.Sprintf("%s_%s_%s_%s", p.Cfg.Name, c.Session.Start.UTC().Format("20060102T150405Z"),
 		strings.ReplaceAll(c.Session.Remote.String(), ":", "-"), c.Result.Fingerprint)
 	pcapPath := filepath.Join(dir, base+".pcap")
+	if !p.Cfg.Capture.KeepLocalIP {
+		// after classification and description, so facts come from the real
+		// bytes; the text of the description is scrubbed the same way
+		res := c.Session.MaskLocal()
+		for real, repl := range res.Mapping {
+			c.Meta.Title = strings.ReplaceAll(c.Meta.Title, real, repl)
+			c.Meta.Description = strings.ReplaceAll(c.Meta.Description, real, repl)
+		}
+		if res.Unmasked > 0 {
+			p.Log.Warn("honeypot address left in payload text, no same-length replacement", "remote", c.Session.Remote, "occurrences", res.Unmasked)
+		}
+	}
 	size, err := c.Session.Write(pcapPath)
 	if err != nil {
 		return err
@@ -554,6 +566,14 @@ func (p *Pipeline) refreshPrevalence(ctx context.Context) {
 		}
 		cap, err := p.Client.Get(ctx, sc.CaptureID)
 		if err != nil {
+			var ae *pcaphub.APIError
+			if errors.As(err, &ae) && (ae.Status == 404 || ae.Status == 410) {
+				// the representative was deleted on PcapHub (a curator's
+				// choice): forget the upload so the next sighting of the
+				// scenario is uploaded as the new representative
+				p.Log.Info("representative capture gone, scenario will be re-uploaded on its next sighting", "capture", sc.CaptureID, "class", sc.Class)
+				p.State.ForgetUpload(fp)
+			}
 			continue
 		}
 		desc := replacePrevalence(cap.Description, describe.Prevalence(sc.Seen, sc.IPCount, sc.FirstSeen))

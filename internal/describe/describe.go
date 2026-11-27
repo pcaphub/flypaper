@@ -46,7 +46,9 @@ func Build(in Input) Meta {
 	title := Title(r, s)
 
 	var b strings.Builder
-	fmt.Fprintf(&b, "Honeypot session captured by flypaper collector %q", in.Collector)
+	// The collector's name stays out of public text (it maps to one host);
+	// the region is coarse enough to keep.
+	b.WriteString("Honeypot session captured by a flypaper collector")
 	if in.Region != "" {
 		fmt.Fprintf(&b, " (%s)", in.Region)
 	}

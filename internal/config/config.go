@@ -58,6 +58,11 @@ type Capture struct {
 	ExcludeIPs   []string `yaml:"exclude_ips"`
 	// Delete processed ring files older than this (0 = never delete).
 	Retention time.Duration `yaml:"retention"`
+	// KeepLocalIP leaves the honeypot's own addresses in uploaded captures.
+	// Off (the default), they are rewritten to documentation addresses
+	// (192.0.2.x, 2001:db8::x) in headers and payload text before upload, so
+	// a published capture does not reveal where the honeypot runs.
+	KeepLocalIP bool `yaml:"keep_local_ip"`
 	// Ring files larger than this are skipped (logged, marked processed) instead
 	// of sliced: an hour of flood traffic would otherwise be held in memory
 	// whole, at two to three times its size. Default 96 MB, sized for the

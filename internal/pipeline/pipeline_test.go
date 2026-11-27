@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -17,6 +19,7 @@ import (
 
 	"github.com/pcaphub/flypaper/internal/classify"
 	"github.com/pcaphub/flypaper/internal/config"
+	"github.com/pcaphub/flypaper/internal/pcaphub"
 	"github.com/pcaphub/flypaper/internal/state"
 )
 
@@ -416,4 +419,97 @@ func TestLogsFromUsesFirstPacketTime(t *testing.T) {
 	if !from.Equal(want) {
 		t.Fatalf("logsFrom = %s, want %s (first packet - 10 min)", from, want)
 	}
+}
+
+// Uploaded captures and their descriptions carry no trace of the honeypot's
+// own address; the attacker's stays. keep_local_ip switches the rewrite off.
+func TestPublishMasksHoneypotAddress(t *testing.T) {
+	ring, cowrie := synth(t)
+	cfg := testConfig(t, ring, cowrie)
+	st, _ := state.Open(cfg.StateDir)
+	p := &Pipeline{Cfg: cfg, State: st, Log: slog.New(slog.NewTextHandler(os.Stderr, nil))}
+	sum, err := p.Run(context.Background())
+	if err != nil || sum.Uploaded+sum.Baseline == 0 {
+		t.Fatalf("uploaded=%d baseline=%d err=%v", sum.Uploaded, sum.Baseline, err)
+	}
+	pcaps, _ := filepath.Glob(filepath.Join(cfg.Outbox, "*.pcap"))
+	if len(pcaps) == 0 {
+		t.Fatal("no pcap in the outbox")
+	}
+	hp := honeypot.To4()
+	for _, f := range pcaps {
+		b, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if bytesIndex(b, hp) >= 0 {
+			t.Errorf("%s still holds the honeypot address bytes", filepath.Base(f))
+		}
+		if bytesIndex(b, []byte(honeypot.String())) >= 0 {
+			t.Errorf("%s still holds the honeypot address text", filepath.Base(f))
+		}
+		if bytesIndex(b, bruter.To4()) < 0 && bytesIndex(b, intruder.To4()) < 0 && bytesIndex(b, scanner.To4()) < 0 {
+			t.Errorf("%s lost the attacker address", filepath.Base(f))
+		}
+		meta, _ := os.ReadFile(f[:len(f)-5] + ".json")
+		if bytesIndex(meta, []byte(honeypot.String())) >= 0 {
+			t.Errorf("%s description mentions the honeypot address", filepath.Base(f))
+		}
+		if bytesIndex(meta, []byte(`collector "test-1"`)) >= 0 {
+			t.Errorf("%s description names the collector", filepath.Base(f))
+		}
+	}
+
+	cfg.Capture.KeepLocalIP = true
+	cfg.StateDir, cfg.Outbox = filepath.Join(t.TempDir(), "s"), filepath.Join(t.TempDir(), "o")
+	st2, _ := state.Open(cfg.StateDir)
+	p2 := &Pipeline{Cfg: cfg, State: st2, Log: p.Log}
+	if _, err := p2.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	kept, _ := filepath.Glob(filepath.Join(cfg.Outbox, "*.pcap"))
+	b, _ := os.ReadFile(kept[0])
+	if bytesIndex(b, hp) < 0 {
+		t.Error("keep_local_ip did not keep the address")
+	}
+}
+
+// A representative that PcapHub answers 404 for is forgotten, so the scenario
+// uploads again on its next sighting instead of counting as a repeat for 30 days.
+func TestDeletedRepresentativeIsForgotten(t *testing.T) {
+	ring, cowrie := synth(t)
+	cfg := testConfig(t, ring, cowrie)
+	cfg.DryRun = false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(404)
+		w.Write([]byte(`{"error":"not found","code":"NOT_FOUND"}`))
+	}))
+	defer srv.Close()
+	st, _ := state.Open(cfg.StateDir)
+	fp := "deadbeef"
+	st.Observe(fp, "web-exploit-attempt", "198.51.100.9", time.Now().Add(-48*time.Hour))
+	st.RecordUpload(fp, "fam", "11111111-2222-3333-4444-555555555555", time.Now().Add(-48*time.Hour), false, false)
+	st.Observe(fp, "web-exploit-attempt", "198.51.100.10", time.Now().Add(-time.Hour)) // seen again since
+	p := &Pipeline{Cfg: cfg, State: st, Client: pcaphub.New(srv.URL, "phk_test"), Log: slog.New(slog.NewTextHandler(os.Stderr, nil)), Now: time.Now}
+	p.refreshPrevalence(context.Background())
+	sc := st.Scenario(fp)
+	if sc.CaptureID != "" || !sc.LastUpload.IsZero() {
+		t.Fatalf("scenario still points at the deleted capture: %+v", sc)
+	}
+	if sc.Seen != 2 {
+		t.Fatalf("sighting count changed: %d", sc.Seen)
+	}
+	if len(st.Representatives()) != 0 {
+		t.Fatal("forgotten scenario still listed as a representative")
+	}
+}
+
+func bytesIndex(b, sub []byte) int {
+	for i := 0; i+len(sub) <= len(b); i++ {
+		if string(b[i:i+len(sub)]) == string(sub) {
+			return i
+		}
+	}
+	return -1
 }
