@@ -19,9 +19,10 @@ import (
 // and ICMPv6 pseudo-header checksums adjusted), the IPv4 header quoted inside
 // ICMP error messages, ARP sender and target addresses, and the dotted
 // decimal text of the address inside TCP and UDP payloads (a scanner's
-// "Host:" header, a banner) when a replacement of the same length exists, so
-// segment sizes and sequence numbers stay valid. Payload text with no
-// same-length replacement is left as it was and reported in the result.
+// "Host:" header, a banner) with a spelling of the same length (octets padded
+// with leading zeros when needed, 203.000.113.001), so segment sizes and
+// sequence numbers stay valid. Payload text with no same-length spelling
+// (addresses under 9 characters) is left as it was and reported in the result.
 //
 // This is a byte-for-byte substitution with checksum arithmetic, nothing is
 // reassembled or interpreted beyond the headers needed to find the fields.
@@ -109,9 +110,7 @@ func (m *masker) add(ip net.IP, i int, avoid map[string]bool) {
 	e := &maskEntry{real: ip, text: []byte(ip.String())}
 	if v4 := ip.To4(); v4 != nil {
 		e.repl = docV4(len(e.text), i, avoid)
-		if len(e.repl.String()) == len(e.text) {
-			e.replText = []byte(e.repl.String())
-		}
+		e.replText = padV4Text(e.repl, len(e.text))
 		var k [4]byte
 		copy(k[:], v4)
 		m.v4[k] = e
@@ -150,6 +149,33 @@ func docV4(n, i int, avoid map[string]bool) net.IP {
 		cands = fallback
 	}
 	return cands[i%len(cands)]
+}
+
+// padV4Text spells ip as dotted decimal in exactly n bytes, padding octets
+// with leading zeros from the right when the plain spelling is shorter
+// (203.0.113.1 -> 203.000.113.001), so a 15-character honeypot address can
+// still be swapped in place inside a payload. nil when no spelling fits:
+// addresses shorter than 9 or longer than 15 characters.
+func padV4Text(ip net.IP, n int) []byte {
+	v4 := ip.To4()
+	if v4 == nil {
+		return nil
+	}
+	oct := make([]string, 4)
+	for i, b := range v4 {
+		oct[i] = fmt.Sprintf("%d", b)
+	}
+	short := n - len(ip.String())
+	for i := 3; i >= 0 && short > 0; i-- {
+		for len(oct[i]) < 3 && short > 0 {
+			oct[i] = "0" + oct[i]
+			short--
+		}
+	}
+	if short != 0 {
+		return nil
+	}
+	return []byte(oct[0] + "." + oct[1] + "." + oct[2] + "." + oct[3])
 }
 
 // packet rewrites one frame in place.

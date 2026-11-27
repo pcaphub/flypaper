@@ -3,6 +3,7 @@ package session
 import (
 	"encoding/binary"
 	"net"
+	"strings"
 	"testing"
 	"time"
 
@@ -122,6 +123,63 @@ func TestMaskLocalRewritesHeadersAndPayloadText(t *testing.T) {
 	}
 	if string(s.Packets[0].Payload[:16]) != "GET / HTTP/1.1\r\n" {
 		t.Errorf("request line damaged: %q", s.Packets[0].Payload[:16])
+	}
+}
+
+// A 15-character honeypot address has no documentation address of the same
+// length; the payload text is swapped for a zero-padded spelling instead so
+// nothing of the real address survives in a Host header.
+func TestMaskLocalPadsLongAddressText(t *testing.T) {
+	long := net.ParseIP("157.245.170.238").To4()
+	req := []byte("GET /wp-login.php HTTP/1.1\r\nHost: 157.245.170.238:8080\r\n\r\n")
+	in := tcpFrame(t, atkIP, long, 40000, 8080, req)
+	s := sessionOf(t, in)
+	s.Packets[0].Local = long
+
+	res := s.MaskLocal()
+	if res.Headers != 1 || res.Payloads != 1 || res.Unmasked != 0 {
+		t.Fatalf("result = %+v", res)
+	}
+	repl := res.Mapping[long.String()]
+	if net.ParseIP(repl) == nil || !strings.HasPrefix(repl, "192.0.2.") {
+		t.Fatalf("replacement %q should be the 192.0.2.x fallback", repl)
+	}
+	pk := s.Packets[0]
+	checksumsOK(t, pk.Data)
+	pkt := gopacket.NewPacket(pk.Data, layers.LinkTypeEthernet, gopacket.Default)
+	ip := pkt.Layer(layers.LayerTypeIPv4).(*layers.IPv4)
+	if !ip.DstIP.Equal(net.ParseIP(repl)) || !ip.SrcIP.Equal(atkIP) {
+		t.Errorf("header addresses %s -> %s", ip.SrcIP, ip.DstIP)
+	}
+	body := string(pkt.TransportLayer().LayerPayload())
+	if len(body) != len(req) || contains(body, "157.245") || contains(body, "170.238") {
+		t.Errorf("payload text not swapped: %q", body)
+	}
+	want := "Host: " + string(padV4Text(net.ParseIP(repl), 15)) + ":8080"
+	if !contains(body, want) {
+		t.Errorf("payload %q lacks %q", body, want)
+	}
+	if string(pk.Payload) != body {
+		t.Errorf("Payload slice out of sync")
+	}
+}
+
+func TestPadV4Text(t *testing.T) {
+	ip := net.ParseIP("203.0.113.1")
+	cases := map[int]string{
+		11: "203.0.113.1", 12: "203.0.113.01", 13: "203.0.113.001",
+		14: "203.00.113.001", 15: "203.000.113.001",
+	}
+	for n, want := range cases {
+		if got := string(padV4Text(ip, n)); got != want {
+			t.Errorf("pad to %d = %q, want %q", n, got, want)
+		}
+	}
+	if padV4Text(ip, 10) != nil || padV4Text(ip, 16) != nil {
+		t.Error("impossible lengths should give nil")
+	}
+	if padV4Text(net.ParseIP("192.0.2.1"), 8) != nil {
+		t.Error("8 characters cannot hold a documentation address")
 	}
 }
 
